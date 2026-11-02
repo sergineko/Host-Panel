@@ -1,5 +1,5 @@
 /**
- * Object storage in the style of Cloudflare R2: buckets are directories under
+ * Object storage: buckets are directories under
  * HP_STORAGE_DIR, objects are files. Public buckets can be served by Caddy on their own
  * hostname (cdn.example.com); private ones are read through the token API.
  */

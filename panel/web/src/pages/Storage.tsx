@@ -28,7 +28,7 @@ export default function Storage() {
     <>
       <PageHeader
         title="Almacenamiento"
-        description="Buckets de archivos al estilo R2: sube imágenes, vídeos o backups y sírvelos desde tu propio dominio o por API."
+        description="Buckets de archivos compatibles con tus apps: sube imágenes, vídeos o backups y sírvelos desde tu propio dominio o por API."
         actions={
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setOpen(true)}>
             Nuevo bucket

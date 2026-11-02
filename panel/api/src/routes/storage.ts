@@ -138,7 +138,7 @@ export default async function storageRoutes(app: FastifyInstance) {
   app.delete('/api/buckets/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const b = getBucket(id);
-    const workers = boundBy('r2', id);
+    const workers = boundBy('bucket', id);
     if (workers.length) throw badRequest(`Antes quita el binding de los Workers: ${workers.map((w) => w.name).join(', ')}`);
     run('DELETE FROM buckets WHERE id = ?', id);
     deleteScopeTokens('bucket', id);

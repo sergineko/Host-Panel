@@ -72,7 +72,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.get('/api/databases/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const db = getDb(id);
-    return { ...present(db), api_url: `${panelBase()}/api/d1/v1/${db.name}/query`, host: config.serverIp };
+    return { ...present(db), api_url: `${panelBase()}/api/sql/v1/${db.name}/query`, host: config.serverIp };
   });
 
   app.post('/api/databases', async (req) => {
@@ -116,7 +116,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.delete('/api/databases/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const row = getDb(id);
-    const workers = boundBy('d1', id);
+    const workers = boundBy('sql', id);
     if (workers.length) throw badRequest(`Antes quita el binding de los Workers: ${workers.map((w) => w.name).join(', ')}`);
     await dropDatabase(row.name, row.username, JSON.parse(row.remote_hosts) as string[]);
     run('DELETE FROM databases WHERE id = ?', id);
@@ -177,9 +177,9 @@ export default async function databaseRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // --- public HTTP API (D1 style) -----------------------------------------------------------
-  // POST /api/d1/v1/<database>/query  { "sql": "...", "params": [] }  or  [{ sql, params }, …]
-  app.post('/api/d1/v1/:name/query', async (req) => {
+  // --- public HTTP API --------------------------------------------------------------------
+  // POST /api/sql/v1/<database>/query  { "sql": "...", "params": [] }  or  [{ sql, params }, …]
+  app.post('/api/sql/v1/:name/query', async (req) => {
     const { name } = parse(z.object({ name: z.string().max(64) }), req.params);
     const db = get<DatabaseRow>('SELECT * FROM databases WHERE name = ?', name);
     if (!db) throw notFound('Base de datos');

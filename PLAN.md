@@ -99,8 +99,8 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 | **Varias versiones de PHP** | Instalar/desinstalar 7.4 → 8.5 desde el panel, versión por defecto, versión por sitio (en los VPS se instala sola); el actualizador avisa de cada parche (8.5.10 → 8.5.12) |
 | **WordPress en un clic** | Asistente sin GitHub: crea la base de datos, descarga e instala WordPress con WP-CLI en el idioma elegido, protege wp-config.php y uploads, y permite restablecer la contraseña del administrador |
 | **Actualizador** | Compara versiones con GitHub/nodejs.org; actualiza panel, Caddy+WAF, Stalwart, Roundcube, Node y paquetes del sistema; actualizaciones nocturnas opcionales |
-| **Almacenamiento (estilo R2)** | Buckets públicos o privados, dominio propio con SSL y caché, CORS, explorador con subida por arrastre, API HTTP con tokens |
-| **Bases de datos (estilo D1)** | Consola SQL, explorador de tablas, API HTTP `POST /api/d1/v1/<bd>/query` con parámetros y transacciones, tokens de solo lectura, exportar/importar `.sql`, acceso remoto por IP |
+| **Almacenamiento** | Buckets públicos o privados, dominio propio con SSL y caché, CORS, explorador con subida por arrastre, API HTTP con tokens |
+| **Bases de datos SQL** | Consola SQL, explorador de tablas, API HTTP `POST /api/sql/v1/<bd>/query` con parámetros y transacciones, tokens de solo lectura, exportar/importar `.sql`, acceso remoto por IP |
 | **Seguridad** | 2FA TOTP, sesiones abiertas, lista de IPs del panel, archivos sensibles bloqueados, hotlinking, límite de subida, fail2ban SSH |
 | **Rendimiento** | Caché de estáticos, zstd/gzip, HTTP/3, BBR y ajustes de red, MariaDB y OPcache dimensionados, interfaz cargada por partes |
 | **Correo** | `webmail.<dominio>` y autoconfiguración por dominio, filtros, respuestas automáticas y reenvíos (ManageSieve) |
@@ -113,6 +113,15 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 | **Aislamiento** | Un proceso por Worker (`runtime/worker-host.mjs`), usuario `hpw-<id>`, permisos de Node (solo lectura de su carpeta, sin procesos hijo), systemd sin sockets unix y con límites de memoria/CPU; API interna de bindings en `127.0.0.1:3001` con token por Worker |
 | **Colas** | Lotes por tamaño o tiempo, `ack`/`retry`, reintentos con espera, cola de mensajes fallidos, pausa, productores (Worker o HTTP con token) y consumidores (Worker o *pull* por HTTP), estadísticas |
 | **KV** | Espacios clave-valor con TTL, metadatos, `list` con cursor y explorador en el panel |
+
+### Fase 4 — NoSQL, balanceadores, versiones de Node.js e interfaz · hecho
+| Módulo | Funcionalidad |
+|---|---|
+| **Bases de datos NoSQL** | Un archivo SQLite por base de datos (`<data>/nosql/<nombre>.db`) con documentos JSON por colección; filtros (`$eq $ne $gt $gte $lt $lte $in $nin $exists $contains $size $regex $not $and $or $nor`), actualizaciones (`$set $unset $inc $mul $min $max $rename $currentDate $push $addToSet $pull $pop`), upsert, índices normales y únicos, exportar/importar `.jsonl`, API `POST /api/nosql/v1/<bd>/<colección>/<operación>` con tokens y binding `env.X.collection()` en Workers |
+| **Balanceadores de carga** | Dominios + ruta opcional repartidos entre orígenes (IP:puerto o https://host) con 8 políticas de Caddy, pesos, cookie de sesión, comprobación de salud activa y pasiva, reintentos, estado en vivo por origen y elección rápida de los servidores del panel; si Caddy rechaza la configuración se restaura la anterior |
+| **Versiones de Node.js** | Detección en `/opt/nodejs`, n, nvm y sistema; versión por sitio (`latest`, `system`, rama `22` o exacta); build y servicio systemd con el `PATH` de esa versión; instalación opcional desde nodejs.org con SHA-256; en los VPS se instala sola si falta |
+| **Nombres neutros** | Los tipos de binding son `sql`, `nosql`, `kv`, `bucket` y `queue` (los antiguos se migran solos) |
+| **Interfaz** | Menú reordenado por grupos (Sitios, Datos, Aplicaciones, Red, Administración), ruta de navegación e icono por sección, tarjetas de resumen, avisos unificados, selección por tarjetas y tema claro/oscuro revisado |
 | **Caddy** | API de administración en un socket unix solo para root (los sitios y Workers ya no pueden reconfigurar el proxy) |
 
 ### Fase 4 — Hoja de ruta (ideas siguientes)

@@ -2,7 +2,7 @@ import { useEffect, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Send, Trash2 } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import { api, type Queue, type Worker } from '../lib/api';
 import { compact, timeAgo } from '../lib/format';
 import { BarChart } from '../components/BarChart';
@@ -258,9 +258,6 @@ export default function QueueDetail() {
   const queue = q.data!;
   return (
     <>
-      <Link to="/queues" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> Colas
-      </Link>
       <PageHeader
         title={
           <span className="flex items-center gap-3">

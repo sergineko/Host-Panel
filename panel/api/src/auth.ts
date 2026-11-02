@@ -14,7 +14,7 @@ declare module 'fastify' {
 const COOKIE = 'hp_session';
 const SESSION_TTL = 12 * 3600 * 1000;
 // Token APIs (storage, databases) check their own Bearer tokens.
-const PUBLIC_PREFIXES = ['/api/auth/login', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/d1/v1/', '/api/queues/v1/'];
+const PUBLIC_PREFIXES = ['/api/auth/login', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/sql/v1/', '/api/nosql/v1/', '/api/queues/v1/'];
 const pendingTotp = new Map<number, string>();
 
 // Brute-force protection: 8 failed attempts per IP in 15 minutes.

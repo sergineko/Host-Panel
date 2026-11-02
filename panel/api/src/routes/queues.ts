@@ -5,7 +5,7 @@ import { all, audit, get, run, type QueueRow, type WorkerRow } from '../db.ts';
 import { badRequest, idParam, notFound, parse } from '../lib/validate.ts';
 import { ackMessages, peekMessages, pullMessages, purgeQueue, QUEUE_NAME_RE, queueBacklog, queueStats, sendMessages } from '../services/queues.ts';
 import { createToken, deleteScopeTokens, deleteToken, listTokens, requireToken } from '../services/tokens.ts';
-import { workerBindings } from '../services/workers.ts';
+import { workerBindings, type Binding } from '../services/workers.ts';
 
 function getQueue(id: number) {
   const q = get<QueueRow>('SELECT * FROM queues WHERE id = ?', id);
@@ -14,7 +14,7 @@ function getQueue(id: number) {
 }
 
 /** Workers that produce into (are bound to) a resource. */
-export function boundBy(type: 'd1' | 'kv' | 'r2' | 'queue', id: number) {
+export function boundBy(type: Binding['type'], id: number) {
   return all<WorkerRow>('SELECT id, name, bindings FROM workers')
     .filter((w) => workerBindings(w).some((b) => b.type === type && b.id === id))
     .map((w) => ({ id: w.id, name: w.name }));

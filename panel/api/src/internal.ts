@@ -10,6 +10,7 @@ import { config } from './config.ts';
 import { get, type BucketRow, type DatabaseRow, type WorkerRow } from './db.ts';
 import { HttpError, parse } from './lib/validate.ts';
 import { runBatch } from './services/databases.ts';
+import { listCollections, nosqlByIdOr404, runNosqlAction } from './services/nosql.ts';
 import { KV_MAX_VALUE, kvDelete, kvGet, kvList, kvPut } from './services/kv.ts';
 import { sendMessages } from './services/queues.ts';
 import { deleteObject, getObject, listObjects, putObject } from './services/storage.ts';
@@ -58,13 +59,13 @@ export async function startInternalServer() {
 
   const bucketOf = (req: FastifyRequest) => {
     const { id } = parse(idParam, req.params);
-    bound(req, 'r2', id);
+    bound(req, 'bucket', id);
     const b = get<BucketRow>('SELECT * FROM buckets WHERE id = ?', id);
     if (!b) throw new HttpError(404, 'Bucket no encontrado');
     return b;
   };
 
-  // Raw bodies for KV / R2 writes (whatever their content type, even JSON files).
+  // Raw bodies for KV / bucket writes (whatever their content type, even JSON files).
   await app.register(async (raw) => {
     raw.removeAllContentTypeParsers();
     raw.addContentTypeParser('*', (_req, payload, done) => done(null, payload));
@@ -81,7 +82,7 @@ export async function startInternalServer() {
       });
       return { ok: true };
     });
-    raw.put('/r2/:id/object', async (req) => {
+    raw.put('/bucket/:id/object', async (req) => {
       const b = bucketOf(req);
       const { key } = parse(keyQuery, req.query);
       return putObject(b.name, key, (req.body as Readable | undefined) ?? req.raw);
@@ -95,10 +96,10 @@ export async function startInternalServer() {
     return { ok: true };
   });
 
-  // --- D1 -------------------------------------------------------------------------------
-  app.post('/d1/:id', async (req) => {
+  // --- SQL (MariaDB) ---------------------------------------------------------------------
+  app.post('/sql/:id', async (req) => {
     const { id } = parse(idParam, req.params);
-    bound(req, 'd1', id);
+    bound(req, 'sql', id);
     const body = parse(
       z.object({
         statements: z.array(z.object({ sql: z.string().min(1).max(1_000_000), params: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])).default([]) })).min(1).max(100),
@@ -142,8 +143,20 @@ export async function startInternalServer() {
     return kvList(id, o);
   });
 
-  // --- R2 -------------------------------------------------------------------------------
-  const sendR2 = async (req: FastifyRequest, reply: import('fastify').FastifyReply, head: boolean) => {
+  // --- NoSQL (documents) -------------------------------------------------------------------
+  app.post('/nosql/:id/_collections', async (req) => {
+    const { id } = parse(idParam, req.params);
+    bound(req, 'nosql', id);
+    return { collections: listCollections(nosqlByIdOr404(id)).map((c) => c.name) };
+  });
+  app.post('/nosql/:id/:collection/:action', async (req) => {
+    const p = parse(idParam.extend({ collection: z.string(), action: z.string() }), req.params);
+    bound(req, 'nosql', p.id);
+    return runNosqlAction(nosqlByIdOr404(p.id), p.collection, p.action, req.body ?? {});
+  });
+
+  // --- storage buckets ---------------------------------------------------------------------
+  const sendObject = async (req: FastifyRequest, reply: import('fastify').FastifyReply, head: boolean) => {
     const b = bucketOf(req);
     const { key } = parse(keyQuery, req.query);
     let obj;
@@ -160,14 +173,14 @@ export async function startInternalServer() {
     return reply.send(obj.stream);
   };
   // Fastify answers HEAD from this GET route (headers only).
-  app.get('/r2/:id/object', (req, reply) => sendR2(req, reply, req.method === 'HEAD'));
-  app.post('/r2/:id/delete', async (req) => {
+  app.get('/bucket/:id/object', (req, reply) => sendObject(req, reply, req.method === 'HEAD'));
+  app.post('/bucket/:id/delete', async (req) => {
     const b = bucketOf(req);
     const { keys } = parse(z.object({ keys: z.array(z.string().min(1).max(1024)).max(1000) }), req.body);
     for (const k of keys) await deleteObject(b.name, k);
     return { ok: true };
   });
-  app.post('/r2/:id/list', async (req) => {
+  app.post('/bucket/:id/list', async (req) => {
     const b = bucketOf(req);
     const o = parse(z.object({ prefix: z.string().max(1024).default(''), limit: z.number().int().min(1).max(1000).default(1000) }).passthrough(), req.body ?? {});
     const r = await listObjects(b.name, o.prefix, o.limit);

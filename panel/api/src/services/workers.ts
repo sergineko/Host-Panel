@@ -5,7 +5,7 @@
  *   - its own Linux user (hpw-<id>) and folder /srv/hostpanel/workers/<id> (0750)
  *   - Node's permission model: can only read its own folder; no child processes or addons
  *   - systemd: no access to unix sockets (MariaDB, Caddy admin…), memory and CPU limits
- *   - bindings (D1, R2, KV, Queues) only through the internal API with its own token
+ *   - bindings (SQL, NoSQL, KV, buckets, Queues) only through the internal API with its own token
  *
  * Caddy routes <name>.<workersDomain> and the Worker's routes (ejemplo.com/api/*) to it.
  * In dev mode (any OS) Workers run as plain child processes so they can be tested.
@@ -29,7 +29,7 @@ export const workerUnit = (id: number) => `hp-worker-${id}`;
 export const WORKER_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export interface Binding {
-  type: 'd1' | 'kv' | 'r2' | 'queue';
+  type: 'sql' | 'nosql' | 'kv' | 'bucket' | 'queue';
   name: string;
   id: number;
 }

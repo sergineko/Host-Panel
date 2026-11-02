@@ -1,9 +1,11 @@
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router';
+import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   ArrowLeftRight,
+  ArrowUpCircle,
+  Boxes,
   Cpu,
   Database,
   Globe,
@@ -14,6 +16,7 @@ import {
   Mail,
   Menu,
   Moon,
+  Network,
   Package,
   Rocket,
   Search,
@@ -26,7 +29,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { CommandPalette, type PaletteItem } from './CommandPalette';
-import { Spinner, cx } from './ui';
+import { SectionContext, Spinner, cx, type Section } from './ui';
 
 interface NavItem {
   to: string;
@@ -36,30 +39,43 @@ interface NavItem {
   keywords?: string;
 }
 
-const nav: NavItem[] = [
-  { to: '/', label: 'Resumen', icon: <LayoutDashboard className="size-4" />, keywords: 'inicio dashboard' },
-  { to: '/sites', label: 'Sitios web', icon: <Rocket className="size-4" />, group: 'Hosting', keywords: 'despliegue github webhook' },
-  { to: '/domains', label: 'Dominios y DNS', icon: <Globe className="size-4" />, group: 'Hosting', keywords: 'zona registros' },
-  { to: '/mail', label: 'Correo', icon: <Mail className="size-4" />, group: 'Hosting', keywords: 'buzones webmail email' },
-  { to: '/workers', label: 'Workers', icon: <Zap className="size-4" />, group: 'Workers y datos', keywords: 'funciones serverless edge javascript cron' },
-  { to: '/queues', label: 'Colas', icon: <Inbox className="size-4" />, group: 'Workers y datos', keywords: 'queues mensajes segundo plano' },
-  { to: '/kv', label: 'KV', icon: <KeySquare className="size-4" />, group: 'Workers y datos', keywords: 'clave valor cache sesiones' },
-  { to: '/databases', label: 'Bases de datos (D1)', icon: <Database className="size-4" />, group: 'Workers y datos', keywords: 'mariadb mysql sql d1' },
-  { to: '/storage', label: 'Almacenamiento (R2)', icon: <Package className="size-4" />, group: 'Workers y datos', keywords: 'r2 s3 buckets archivos cdn' },
-  { to: '/servers', label: 'Servidores', icon: <Server className="size-4" />, group: 'Red y seguridad', keywords: 'vps balanceador nodos' },
-  { to: '/proxy', label: 'Proxy inverso', icon: <ArrowLeftRight className="size-4" />, group: 'Red y seguridad', keywords: 'caddy rutas redirecciones' },
-  { to: '/security', label: 'Seguridad / WAF', icon: <ShieldCheck className="size-4" />, group: 'Red y seguridad', keywords: 'firewall ip bloqueo ataque' },
-  { to: '/analytics', label: 'Analítica', icon: <Activity className="size-4" />, group: 'Red y seguridad', keywords: 'tráfico visitas peticiones' },
-  { to: '/system', label: 'Sistema', icon: <Cpu className="size-4" />, group: 'Administración', keywords: 'actualizaciones php versiones' },
-  { to: '/settings', label: 'Ajustes', icon: <Settings className="size-4" />, group: 'Administración', keywords: 'contraseña 2fa sesiones' },
+/** Tinted icon tile per group (page headers). */
+const groupTone: Record<string, string> = {
+  Sitios: 'bg-accent-soft text-accent',
+  Datos: 'bg-info-soft text-info',
+  Aplicaciones: 'bg-violet-soft text-violet',
+  Red: 'bg-ok-soft text-ok',
+  Administración: 'bg-surface-2 text-muted',
+};
+
+// Ordered by how often each section is used: publish → store data → run code → network → admin.
+export const nav: NavItem[] = [
+  { to: '/', label: 'Resumen', icon: <LayoutDashboard />, keywords: 'inicio dashboard estado' },
+  { to: '/sites', label: 'Sitios web', icon: <Rocket />, group: 'Sitios', keywords: 'despliegue github webhook wordpress node php' },
+  { to: '/domains', label: 'Dominios y DNS', icon: <Globe />, group: 'Sitios', keywords: 'zona registros dns' },
+  { to: '/mail', label: 'Correo', icon: <Mail />, group: 'Sitios', keywords: 'buzones webmail email' },
+  { to: '/databases', label: 'Bases de datos SQL', icon: <Database />, group: 'Datos', keywords: 'mariadb mysql sql tablas' },
+  { to: '/nosql', label: 'Bases de datos NoSQL', icon: <Boxes />, group: 'Datos', keywords: 'documentos json colecciones nosql mongodb' },
+  { to: '/storage', label: 'Almacenamiento', icon: <Package />, group: 'Datos', keywords: 's3 buckets archivos objetos cdn' },
+  { to: '/kv', label: 'Clave-valor (KV)', icon: <KeySquare />, group: 'Datos', keywords: 'kv clave valor cache sesiones' },
+  { to: '/workers', label: 'Workers', icon: <Zap />, group: 'Aplicaciones', keywords: 'funciones serverless edge javascript cron' },
+  { to: '/queues', label: 'Colas', icon: <Inbox />, group: 'Aplicaciones', keywords: 'queues mensajes segundo plano' },
+  { to: '/load-balancers', label: 'Balanceadores de carga', icon: <Network />, group: 'Red', keywords: 'load balancer balanceo origenes alta disponibilidad' },
+  { to: '/proxy', label: 'Proxy inverso', icon: <ArrowLeftRight />, group: 'Red', keywords: 'caddy rutas redirecciones' },
+  { to: '/security', label: 'Seguridad y WAF', icon: <ShieldCheck />, group: 'Red', keywords: 'firewall ip bloqueo ataque waf' },
+  { to: '/servers', label: 'Servidores', icon: <Server />, group: 'Red', keywords: 'vps nodos' },
+  { to: '/analytics', label: 'Analítica', icon: <Activity />, group: 'Administración', keywords: 'tráfico visitas peticiones' },
+  { to: '/system', label: 'Sistema', icon: <Cpu />, group: 'Administración', keywords: 'actualizaciones php node versiones' },
+  { to: '/settings', label: 'Ajustes', icon: <Settings />, group: 'Administración', keywords: 'contraseña 2fa sesiones' },
 ];
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   return (
     <button
-      className="rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-fg"
-      aria-label="Cambiar tema"
+      className="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+      aria-label={dark ? 'Usar tema claro' : 'Usar tema oscuro'}
+      title={dark ? 'Tema claro' : 'Tema oscuro'}
       onClick={() => {
         const next = !dark;
         document.documentElement.classList.toggle('dark', next);
@@ -79,17 +95,37 @@ function ThemeToggle() {
 export function Logo() {
   return (
     <div className="flex items-center gap-2.5">
-      <div className="grid size-7 place-items-center rounded-md bg-accent text-accent-fg shadow-[inset_0_-1px_0_rgba(0,0,0,.15)]">
+      <div className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-accent to-[#d4520a] text-white shadow-[inset_0_-1px_0_rgba(0,0,0,.18),0_1px_2px_rgba(0,0,0,.15)]">
         <svg viewBox="0 0 32 32" className="size-4" fill="currentColor" aria-hidden>
           <path d="M6 6h6v8h8V6h6v20h-6v-7h-8v7H6z" />
         </svg>
       </div>
-      <span className="text-[15px] font-semibold tracking-tight">HostPanel</span>
+      <div className="leading-tight">
+        <div className="text-[15px] font-semibold tracking-tight">HostPanel</div>
+      </div>
     </div>
   );
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** Navigation entry for a path: the longest matching prefix. */
+function sectionFor(pathname: string): Section | null {
+  let best: NavItem | undefined;
+  for (const n of nav) {
+    const match = n.to === '/' ? pathname === '/' : pathname === n.to || pathname.startsWith(`${n.to}/`);
+    if (match && (!best || n.to.length > best.to.length)) best = n;
+  }
+  if (!best) return null;
+  return {
+    to: best.to,
+    label: best.label,
+    group: best.group,
+    icon: best.icon,
+    tone: groupTone[best.group ?? ''] ?? 'bg-accent-soft text-accent',
+    nested: pathname !== best.to,
+  };
+}
 
 export function Layout({ username }: { username: string }) {
   const [open, setOpen] = useState(false);
@@ -119,107 +155,147 @@ export function Layout({ username }: { username: string }) {
   useEffect(() => setOpen(false), [location.pathname]);
 
   const pages = useMemo<PaletteItem[]>(
-    () => nav.map((n) => ({ id: `page-${n.to}`, label: n.label, hint: n.keywords, icon: n.icon, to: n.to, group: 'Páginas' })),
+    () => nav.map((n) => ({ id: `page-${n.to}`, label: n.label, hint: n.keywords, icon: <span className="[&>svg]:size-4">{n.icon}</span>, to: n.to, group: 'Páginas' })),
     [],
   );
+  const section = useMemo(() => sectionFor(location.pathname), [location.pathname]);
 
-  let lastGroup: string | undefined;
+  const groups = useMemo(() => {
+    const out: { name?: string; items: NavItem[] }[] = [];
+    for (const item of nav) {
+      const last = out.at(-1);
+      if (last && last.name === item.group) last.items.push(item);
+      else out.push({ name: item.group, items: [item] });
+    }
+    return out;
+  }, []);
+
+  const logout = async () => {
+    await api.post('/api/auth/logout');
+    qc.clear();
+    window.location.href = '/login';
+  };
+
   const sidebar = (
-    <nav className="flex h-full flex-col p-3" aria-label="Principal">
-      <div className="mb-3 flex items-center justify-between px-2 pt-1">
-        <Logo />
-        <button className="rounded p-1 text-muted lg:hidden" onClick={() => setOpen(false)} aria-label="Cerrar menú">
+    <nav className="flex h-full flex-col" aria-label="Principal">
+      <div className="flex h-14 shrink-0 items-center justify-between px-4">
+        <Link to="/" aria-label="Ir al resumen">
+          <Logo />
+        </Link>
+        <button className="rounded-md p-1 text-muted lg:hidden" onClick={() => setOpen(false)} aria-label="Cerrar menú">
           <X className="size-4" />
         </button>
       </div>
-      <button
-        onClick={() => setPalette(true)}
-        className="mb-2 flex h-8 items-center gap-2 rounded-md border border-border bg-bg px-2.5 text-[13px] text-muted transition-colors hover:border-accent/40 hover:text-fg"
-      >
-        <Search className="size-3.5" />
-        <span className="flex-1 text-left">Buscar…</span>
-        <kbd className="rounded border border-border bg-surface px-1 font-mono text-[10.5px]">{isMac ? '⌘' : 'Ctrl'} K</kbd>
-      </button>
-      <div className="-mx-1 flex-1 overflow-y-auto px-1">
-        {nav.map((item) => {
-          const header = item.group && item.group !== lastGroup ? item.group : null;
-          lastGroup = item.group;
-          return (
-            <div key={item.to}>
-              {header && <div className="mt-4 mb-1 px-2.5 text-[11px] font-medium tracking-wide text-muted uppercase">{header}</div>}
-              <NavLink
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  cx(
-                    'relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 font-medium transition-colors',
-                    isActive
-                      ? 'bg-surface-2 text-fg before:absolute before:top-1.5 before:bottom-1.5 before:-left-3 before:w-[3px] before:rounded-r before:bg-accent'
-                      : 'text-muted hover:bg-surface-2/60 hover:text-fg',
-                  )
-                }
-              >
-                {item.icon}
-                <span className="flex-1">{item.label}</span>
-                {item.to === '/system' && pendingUpdates > 0 && (
-                  <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg" title="Actualizaciones disponibles">
-                    {pendingUpdates}
-                  </span>
-                )}
-              </NavLink>
-            </div>
-          );
-        })}
+      <div className="px-3 pb-2 lg:hidden">
+        <button
+          onClick={() => setPalette(true)}
+          className="flex h-9 w-full items-center gap-2 rounded-lg border border-border bg-bg px-2.5 text-[13px] text-muted"
+        >
+          <Search className="size-3.5" />
+          Buscar…
+        </button>
       </div>
-      <div className="mt-3 flex items-center justify-between border-t border-border pt-3 pl-2.5">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="grid size-7 shrink-0 place-items-center rounded-full bg-surface-2 text-[12px] font-semibold uppercase">{username.slice(0, 1)}</div>
+      <div className="flex-1 space-y-4 overflow-y-auto px-3 pt-1 pb-4">
+        {groups.map((g) => (
+          <div key={g.name ?? 'top'}>
+            {g.name && <div className="mb-1 px-2.5 text-[11px] font-semibold tracking-wider text-muted/80 uppercase">{g.name}</div>}
+            <div className="space-y-px">
+              {g.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) =>
+                    cx(
+                      'group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition-colors [&_svg]:size-4',
+                      isActive ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className={cx('transition-colors', isActive ? 'text-accent' : 'text-muted/80 group-hover:text-fg')}>{item.icon}</span>
+                      <span className="flex-1 truncate">{item.label}</span>
+                      {item.to === '/system' && pendingUpdates > 0 && (
+                        <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg" title="Actualizaciones disponibles">
+                          {pendingUpdates}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+        <div className="flex min-w-0 items-center gap-2.5 pl-1">
+          <div className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-surface-2 to-border text-[12px] font-semibold uppercase">{username.slice(0, 1)}</div>
           <div className="min-w-0">
-            <div className="truncate font-medium">{username}</div>
+            <div className="truncate text-[13px] font-medium">{username}</div>
             <div className="text-xs text-muted">Administrador</div>
           </div>
         </div>
-        <div className="flex">
-          <ThemeToggle />
-          <button
-            className="rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-fg"
-            aria-label="Cerrar sesión"
-            onClick={async () => {
-              await api.post('/api/auth/logout');
-              qc.clear();
-              window.location.href = '/login';
-            }}
-          >
-            <LogOut className="size-4" />
-          </button>
-        </div>
+        <button
+          className="grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-danger-soft hover:text-danger"
+          aria-label="Cerrar sesión"
+          title="Cerrar sesión"
+          onClick={logout}
+        >
+          <LogOut className="size-4" />
+        </button>
       </div>
     </nav>
   );
 
   return (
-    <div className="min-h-screen lg:pl-60">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-border bg-surface lg:block">{sidebar}</aside>
+    <div className="min-h-screen lg:pl-64">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-border bg-surface lg:block">{sidebar}</aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 w-64 border-r border-border bg-surface shadow-xl">{sidebar}</aside>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-border bg-surface shadow-pop">{sidebar}</aside>
         </div>
       )}
-      <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:hidden">
-        <button onClick={() => setOpen(true)} className="rounded p-1 text-muted" aria-label="Abrir menú">
+      <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-surface/85 px-4 backdrop-blur-md sm:px-6">
+        <button onClick={() => setOpen(true)} className="rounded-md p-1 text-muted lg:hidden" aria-label="Abrir menú">
           <Menu className="size-5" />
         </button>
-        <Logo />
-        <button onClick={() => setPalette(true)} className="ml-auto rounded p-1.5 text-muted" aria-label="Buscar">
+        <div className="lg:hidden">
+          <Logo />
+        </div>
+        <button
+          onClick={() => setPalette(true)}
+          className="ml-auto hidden h-9 w-full max-w-md items-center gap-2 rounded-lg border border-border bg-bg px-3 text-[13px] text-muted transition-colors hover:border-border-strong hover:text-fg sm:flex lg:ml-0"
+        >
           <Search className="size-4" />
+          <span className="flex-1 text-left">Buscar sitios, dominios, bases de datos…</span>
+          <kbd className="rounded border border-border bg-surface px-1.5 font-mono text-[10.5px]">{isMac ? '⌘' : 'Ctrl'} K</kbd>
         </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button onClick={() => setPalette(true)} className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface-2 sm:hidden" aria-label="Buscar">
+            <Search className="size-4" />
+          </button>
+          {pendingUpdates > 0 && (
+            <Link
+              to="/system"
+              className="hidden h-8 items-center gap-1.5 rounded-lg bg-accent-soft px-2.5 text-[12.5px] font-medium text-accent transition-colors hover:brightness-95 sm:flex"
+            >
+              <ArrowUpCircle className="size-4" />
+              {pendingUpdates} actualizaci{pendingUpdates === 1 ? 'ón' : 'ones'}
+            </Link>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
-      <main key={location.pathname.split('/')[1]} className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
-        <Suspense fallback={<Spinner className="py-24" />}>
-          <Outlet />
-        </Suspense>
-      </main>
+      <SectionContext.Provider value={section}>
+        <main key={location.pathname.split('/')[1]} className="hp-page mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
+          <Suspense fallback={<Spinner className="py-24" />}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </SectionContext.Provider>
       <CommandPalette open={palette} onClose={() => setPalette(false)} pages={pages} />
     </div>
   );

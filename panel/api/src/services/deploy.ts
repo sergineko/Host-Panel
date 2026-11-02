@@ -17,6 +17,7 @@ import { all, get, run, type DeploymentRow, type ServerRow, type SiteRow } from 
 import { exec } from '../lib/exec.ts';
 import { siteContentRoutes, syncCaddy } from './caddy.ts';
 import { phpPoolDir, PHP_EXTENSIONS } from './php.ts';
+import { ensureNodeOnRemoteScript, nodePathEnv, remoteNodeBin, siteNode, type NodeInstall } from './nodejs.ts';
 import { installWordPress, isWordPressInstalled, wpDir } from './wordpress.ts';
 import {
   buildNodeCaddyConfig,
@@ -156,13 +157,14 @@ systemctl reload php${v}-fpm || systemctl restart php${v}-fpm`;
 }
 
 /** Node: starts the release on a slot and waits until it listens. */
-async function startNodeAppOnNode(server: ServerRow, site: SiteRow, slot: number, workdir: string, start: string, log: (l: string) => void) {
+async function startNodeAppOnNode(server: ServerRow, site: SiteRow, slot: number, workdir: string, start: string, node: NodeInstall, log: (l: string) => void) {
   const unit = nodeUnit(site.id, slot);
   const port = nodePort(site.id, slot);
-  log(`▶ ${server.name}: arrancando en el slot ${slot} (puerto ${port})`);
+  log(`▶ ${server.name}: arrancando con Node.js ${node.version} en el slot ${slot} (puerto ${port})`);
   await remoteScript(
     server,
-    `${writeFileScript(`/etc/systemd/system/${unit}.service`, nodeUnitContent(site, slot, workdir, start))}
+    `${ensureNodeOnRemoteScript(node)}
+${writeFileScript(`/etc/systemd/system/${unit}.service`, nodeUnitContent(site, slot, workdir, start, remoteNodeBin(node)))}
 systemctl daemon-reload
 systemctl enable ${unit} >/dev/null 2>&1
 systemctl restart ${unit}
@@ -261,7 +263,7 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
       release = rollbackRelease;
       releaseDir = join(p.releases, release);
       if (!config.dev && !existsSync(releaseDir)) throw new Error(`La release ${release} ya no existe en disco`);
-      log(`↺ Rollback a la release ${release}`);
+      log(release === site.active_release ? `↻ Volviendo a publicar la release actual ${release}` : `↺ Rollback a la release ${release}`);
       const original = get<DeploymentRow>('SELECT * FROM deployments WHERE site_id = ? AND release = ? ORDER BY id LIMIT 1', site.id, release);
       run(
         'UPDATE deployments SET release = ?, commit_sha = ?, commit_message = ? WHERE id = ?',
@@ -296,6 +298,11 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
       }
       await chownSite(site.id, releaseDir);
 
+      // Node.js version for install/build (the same one runs Node apps).
+      const buildNode = needsNode(site, releaseDir) ? siteNode(site) : null;
+      const buildEnv = buildNode ? { ...env, PATH: nodePathEnv(buildNode) } : env;
+      if (buildNode) log(`Node.js ${buildNode.version} (${buildNode.bin})${!site.node_version || site.node_version === 'latest' ? ' · siempre la última instalada' : ''}`);
+
       // 2. Dependencies
       const hasPackageJson = config.dev || existsSync(join(releaseDir, 'package.json'));
       let install = site.install_command;
@@ -307,13 +314,13 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
       }
       if (install) {
         log(`$ ${install}`);
-        await runAsSite(site.id, install, releaseDir, env, { onLine: log, timeoutMs: 20 * 60_000 });
+        await runAsSite(site.id, install, releaseDir, buildEnv, { onLine: log, timeoutMs: 20 * 60_000 });
       }
 
       // 3. Build
       if (site.build_command) {
         log(`$ ${site.build_command}`);
-        await runAsSite(site.id, site.build_command, releaseDir, env, { onLine: log, timeoutMs: 30 * 60_000 });
+        await runAsSite(site.id, site.build_command, releaseDir, buildEnv, { onLine: log, timeoutMs: 30 * 60_000 });
       }
     }
 
@@ -328,11 +335,12 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
       const slot = site.active_release ? 1 - site.active_slot : 0;
       const port = nodePort(site.id, slot);
       const start = site.start_command || 'npm start';
+      const node = siteNode(site);
       const startedOn: ServerRow[] = [];
       try {
         if (local) {
-          log(`▶ Este servidor: arrancando en el slot ${slot} (puerto ${port}): ${start}`);
-          await writeNodeUnit(site, slot, publishDir, start);
+          log(`▶ Este servidor: arrancando con Node.js ${node.version} en el slot ${slot} (puerto ${port}): ${start}`);
+          await writeNodeUnit(site, slot, publishDir, start, node.bin);
           await restartUnit(nodeUnit(site.id, slot));
           const healthy = config.dev || (await waitForPort(port, 60_000));
           if (!healthy) {
@@ -342,7 +350,7 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
           }
         }
         for (const server of remotes) {
-          await startNodeAppOnNode(server, site, slot, publishDir, start, log);
+          await startNodeAppOnNode(server, site, slot, publishDir, start, node, log);
           startedOn.push(server);
         }
       } catch (err) {
@@ -396,6 +404,14 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
     flush();
     setTimeout(() => liveLogs.delete(deploymentId), 60_000);
   }
+}
+
+/** Node.js is needed to run Node apps and for npm/yarn installs and builds. */
+function needsNode(site: SiteRow, releaseDir: string) {
+  if (site.type === 'node') return true;
+  const cmds = `${site.install_command} ${site.build_command}`;
+  if (/\b(npm|npx|yarn|pnpm|node|corepack)\b/.test(cmds)) return true;
+  return !!site.build_command && (config.dev || existsSync(join(releaseDir, 'package.json')));
 }
 
 async function cleanupReleases(siteId: number, keep: string) {

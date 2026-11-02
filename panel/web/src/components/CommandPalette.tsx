@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { CornerDownLeft, Database, Globe, Inbox, Package, Rocket, Search, Zap } from 'lucide-react';
-import { api, type Bucket, type DatabaseInfo, type Domain, type Queue, type Site, type Worker } from '../lib/api';
+import { Boxes, CornerDownLeft, Database, Globe, Inbox, Network, Package, Rocket, Search, Zap } from 'lucide-react';
+import { api, type Bucket, type DatabaseInfo, type Domain, type LoadBalancer, type NosqlDatabase, type Queue, type Site, type Worker } from '../lib/api';
 import { cx } from './ui';
 
 export interface PaletteItem {
@@ -28,6 +28,8 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
   const buckets = useQuery({ queryKey: ['buckets'], queryFn: () => api.get<Bucket[]>('/api/buckets'), enabled: open, staleTime: 30_000 });
   const dbs = useQuery({ queryKey: ['databases'], queryFn: () => api.get<DatabaseInfo[]>('/api/databases'), enabled: open, staleTime: 30_000 });
   const workers = useQuery({ queryKey: ['workers'], queryFn: () => api.get<Worker[]>('/api/workers'), enabled: open, staleTime: 30_000 });
+  const nosql = useQuery({ queryKey: ['nosql'], queryFn: () => api.get<NosqlDatabase[]>('/api/nosql'), enabled: open, staleTime: 30_000 });
+  const lbs = useQuery({ queryKey: ['load-balancers'], queryFn: () => api.get<LoadBalancer[]>('/api/load-balancers'), enabled: open, staleTime: 30_000 });
   const queues = useQuery({ queryKey: ['queues'], queryFn: () => api.get<Queue[]>('/api/queues'), enabled: open, staleTime: 30_000 });
 
   const items = useMemo<PaletteItem[]>(
@@ -38,9 +40,11 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
       ...(sites.data ?? []).map((s) => ({ id: `site-${s.id}`, label: s.name, hint: s.hostnames[0], icon: <Rocket className="size-4" />, to: `/sites/${s.id}`, group: 'Sitios' })),
       ...(domains.data ?? []).map((d) => ({ id: `dom-${d.id}`, label: d.name, hint: 'DNS, correo y seguridad', icon: <Globe className="size-4" />, to: `/domains/${d.id}`, group: 'Dominios' })),
       ...(buckets.data ?? []).map((b) => ({ id: `bk-${b.id}`, label: b.name, hint: b.hostname || 'bucket', icon: <Package className="size-4" />, to: `/storage/${b.id}`, group: 'Almacenamiento' })),
-      ...(dbs.data ?? []).map((d) => ({ id: `db-${d.id}`, label: d.name, hint: 'MariaDB', icon: <Database className="size-4" />, to: `/databases/${d.id}`, group: 'Bases de datos' })),
+      ...(dbs.data ?? []).map((d) => ({ id: `db-${d.id}`, label: d.name, hint: 'MariaDB', icon: <Database className="size-4" />, to: `/databases/${d.id}`, group: 'Bases de datos SQL' })),
+      ...(nosql.data ?? []).map((d) => ({ id: `nosql-${d.id}`, label: d.name, hint: `${d.collections} colecciones`, icon: <Boxes className="size-4" />, to: `/nosql/${d.id}`, group: 'Bases de datos NoSQL' })),
+      ...(lbs.data ?? []).map((l) => ({ id: `lb-${l.id}`, label: l.name, hint: l.hostnames[0], icon: <Network className="size-4" />, to: '/load-balancers', group: 'Balanceadores' })),
     ],
-    [pages, sites.data, domains.data, buckets.data, dbs.data, workers.data, queues.data],
+    [pages, sites.data, domains.data, buckets.data, dbs.data, workers.data, queues.data, nosql.data, lbs.data],
   );
 
   const filtered = useMemo(() => {

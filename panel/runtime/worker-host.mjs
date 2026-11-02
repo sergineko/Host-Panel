@@ -6,7 +6,7 @@
 //
 //  Usage: node --permission --allow-fs-read=<dir> worker-host.mjs <dir>
 //  <dir> contains worker.mjs (the code) and config.json (port, token, vars, bindings).
-//  Bindings (D1, R2, KV, Queues) are proxied to the panel's internal API with the
+//  Bindings (SQL, NoSQL, KV, storage buckets, Queues) are proxied to the panel's internal API with the
 //  Worker's own token, which only grants access to the resources bound to it.
 //  No dependencies on purpose: this file runs as an unprivileged, sandboxed process.
 // =====================================================================================
@@ -69,8 +69,9 @@ async function call(path, body) {
   return data;
 }
 
-function d1Binding(id) {
-  const run = (statements, raw = false) => call(`/d1/${id}`, { statements, raw });
+/** SQL database (MariaDB): prepare(sql).bind(…).all() / first() / run(), batch(), exec(). */
+function sqlBinding(id) {
+  const run = (statements, raw = false) => call(`/sql/${id}`, { statements, raw });
   const shape = (r) => ({ success: true, results: r.results, meta: r.meta });
   class Statement {
     constructor(sql, params = []) {
@@ -145,8 +146,9 @@ function kvBinding(id) {
   };
 }
 
-function r2Binding(id) {
-  const url = (key) => `${API}/r2/${id}/object?key=${encodeURIComponent(key)}`;
+/** Object storage bucket: get / head / put / delete / list. */
+function bucketBinding(id) {
+  const url = (key) => `${API}/bucket/${id}/object?key=${encodeURIComponent(key)}`;
   const object = (key, res, withBody) => {
     const h = res.headers;
     const obj = {
@@ -179,7 +181,7 @@ function r2Binding(id) {
     async get(key) {
       const res = await fetch(url(key), { headers: AUTH });
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`R2 get: ${res.status}`);
+      if (!res.ok) throw new Error(`Bucket get: ${res.status}`);
       return object(key, res, true);
     },
     async head(key) {
@@ -192,13 +194,39 @@ function r2Binding(id) {
       const type = options.httpMetadata?.contentType ?? (options.httpMetadata instanceof Headers ? options.httpMetadata.get('content-type') : undefined);
       if (type) headers['content-type'] = type;
       const res = await fetch(url(key), { method: 'PUT', headers, ...streamInit(toBody(value ?? '')) });
-      if (!res.ok) throw new Error(`R2 put: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
+      if (!res.ok) throw new Error(`Bucket put: ${(await res.json().catch(() => ({}))).error ?? res.status}`);
       return this.head(key);
     },
     async delete(keys) {
-      await call(`/r2/${id}/delete`, { keys: Array.isArray(keys) ? keys : [keys] });
+      await call(`/bucket/${id}/delete`, { keys: Array.isArray(keys) ? keys : [keys] });
     },
-    list: (options = {}) => call(`/r2/${id}/list`, options),
+    list: (options = {}) => call(`/bucket/${id}/list`, options),
+  };
+}
+
+/**
+ * Document (NoSQL) database: env.DOCS.collection('users').find({ edad: { $gte: 18 } }, { sort: { nombre: 1 } }).
+ * Filters and updates use the MongoDB operators ($eq, $gt, $in, $regex, $or… / $set, $inc, $push…).
+ */
+function nosqlBinding(id) {
+  const op = (collection, action, body = {}) => call(`/nosql/${id}/${encodeURIComponent(collection)}/${action}`, body);
+  const collection = (name) => ({
+    get: async (docId) => (await op(name, 'get', { id: docId })).document,
+    find: async (filter = {}, options = {}) => (await op(name, 'find', { filter, ...options })).documents,
+    findOne: async (filter = {}, options = {}) => (await op(name, 'findOne', { filter, ...options })).document,
+    count: async (filter = {}) => (await op(name, 'count', { filter })).count,
+    insertOne: (document) => op(name, 'insertOne', { document }),
+    insertMany: (documents) => op(name, 'insertMany', { documents }),
+    updateOne: (filter, update, options = {}) => op(name, 'updateOne', { filter, update, ...options }),
+    updateMany: (filter, update, options = {}) => op(name, 'updateMany', { filter, update, ...options }),
+    replaceOne: (filter, document, options = {}) => op(name, 'replaceOne', { filter, document, ...options }),
+    deleteOne: (filter) => op(name, 'deleteOne', { filter }),
+    deleteMany: (filter) => op(name, 'deleteMany', { filter }),
+    createIndex: (field, options = {}) => op(name, 'createIndex', { field, ...options }),
+  });
+  return {
+    collection,
+    listCollections: async () => (await call(`/nosql/${id}/_collections`, {})).collections,
   };
 }
 
@@ -220,9 +248,10 @@ function queueBinding(id) {
 
 const env = { ...cfg.vars, ...cfg.secrets };
 for (const b of cfg.bindings) {
-  if (b.type === 'd1') env[b.name] = d1Binding(b.id);
+  if (b.type === 'sql') env[b.name] = sqlBinding(b.id);
+  else if (b.type === 'nosql') env[b.name] = nosqlBinding(b.id);
   else if (b.type === 'kv') env[b.name] = kvBinding(b.id);
-  else if (b.type === 'r2') env[b.name] = r2Binding(b.id);
+  else if (b.type === 'bucket') env[b.name] = bucketBinding(b.id);
   else if (b.type === 'queue') env[b.name] = queueBinding(b.id);
 }
 

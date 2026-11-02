@@ -16,6 +16,7 @@ import {
   type ServerRow,
   type WorkerRow,
   type IpRuleRow,
+  type LoadBalancerRow,
   type ProxyRouteRow,
   type RedirectRow,
   type SecurityRow,
@@ -353,7 +354,7 @@ function parseWorkerRoute(pattern: string) {
   return { host, path };
 }
 
-/** Public bucket served on its own hostname (like an R2 custom domain). */
+/** Public bucket served on its own hostname (custom domain). */
 function bucketRoutes(b: BucketRow): Route[] {
   const cors = b.cors_origins.trim();
   const routes: Route[] = [
@@ -424,6 +425,81 @@ function proxyHandler(route: ProxyRouteRow): Json[] {
   return handlers;
 }
 
+// --- load balancers -----------------------------------------------------------------
+
+export interface LbOrigin {
+  address: string;
+  weight: number;
+  enabled: boolean;
+  label?: string;
+  server_id?: number | null;
+}
+
+export const lbOrigins = (lb: Pick<LoadBalancerRow, 'origins'>) => JSON.parse(lb.origins || '[]') as LbOrigin[];
+export const lbHostnames = (lb: Pick<LoadBalancerRow, 'hostnames'>) => JSON.parse(lb.hostnames || '[]') as string[];
+
+/** "https://10.0.0.5:8443" | "10.0.0.5:3000" → dial address and whether it uses TLS. */
+export function parseOrigin(address: string) {
+  const url = new URL(/^https?:\/\//.test(address) ? address : `http://${address}`);
+  const https = url.protocol === 'https:';
+  return { dial: `${url.hostname}:${url.port || (https ? 443 : 80)}`, https, host: url.hostname };
+}
+
+function selectionPolicy(lb: LoadBalancerRow, origins: LbOrigin[]): Json {
+  switch (lb.policy) {
+    case 'weighted_round_robin':
+      return { policy: 'weighted_round_robin', weights: origins.map((o) => Math.max(1, o.weight || 1)) };
+    case 'cookie':
+      return { policy: 'cookie', name: lb.sticky_cookie || 'hp_lb', fallback: { policy: 'least_conn' } };
+    case 'least_conn':
+    case 'ip_hash':
+    case 'first':
+    case 'random':
+    case 'uri_hash':
+    case 'round_robin':
+      return { policy: lb.policy };
+    default:
+      return { policy: 'round_robin' };
+  }
+}
+
+export function loadBalancerHandlers(lb: LoadBalancerRow): Json[] {
+  const origins = lbOrigins(lb).filter((o) => o.enabled);
+  if (!origins.length) {
+    return [{ handler: 'static_response', status_code: 503, body: 'Sin servidores de origen disponibles' }];
+  }
+  const parsed = origins.map((o) => parseOrigin(o.address));
+  const handler: Json = {
+    handler: 'reverse_proxy',
+    upstreams: parsed.map((p) => ({ dial: p.dial })),
+    load_balancing: {
+      selection_policy: selectionPolicy(lb, origins),
+      retries: Math.max(0, lb.retries),
+      try_duration: lb.retries > 0 ? '5s' : undefined,
+    },
+    headers: { request: { set: { 'X-Forwarded-Proto': ['{http.request.scheme}'] } } },
+  };
+  const health: Json = {
+    passive: { fail_duration: `${Math.max(1, lb.fail_duration)}s`, max_fails: Math.max(1, lb.max_fails), unhealthy_status: [502, 503, 504] },
+  };
+  if (lb.health_enabled) {
+    health.active = {
+      uri: lb.health_path || '/',
+      interval: `${Math.max(2, lb.health_interval)}s`,
+      timeout: `${Math.max(1, lb.health_timeout)}s`,
+      expect_status: lb.health_status || 200,
+    };
+  }
+  handler.health_checks = health;
+  if (parsed.some((p) => p.https)) {
+    handler.transport = { protocol: 'http', dial_timeout: '5s', tls: lb.tls_skip_verify ? { insecure_skip_verify: true } : {} };
+  }
+  if (!lb.preserve_host) {
+    (handler.headers as Json).request = { set: { 'X-Forwarded-Proto': ['{http.request.scheme}'], Host: ['{http.reverse_proxy.upstream.hostport}'] } };
+  }
+  return [handler];
+}
+
 function redirectRoute(r: RedirectRow): Route {
   const location = r.preserve_path ? `${r.target.replace(/\/$/, '')}{http.request.uri}` : r.target;
   const route: Route = {
@@ -445,6 +521,7 @@ export function buildCaddyConfig(): Json {
   const domains = all<DomainRow>('SELECT * FROM domains');
   const sites = all<SiteRow>('SELECT * FROM sites');
   const proxies = all<ProxyRouteRow>('SELECT * FROM proxy_routes WHERE enabled = 1');
+  const balancers = all<LoadBalancerRow>('SELECT * FROM load_balancers WHERE enabled = 1');
   const redirects = all<RedirectRow>('SELECT * FROM redirects WHERE enabled = 1');
   const securityRows = all<SecurityRow>('SELECT * FROM security');
   const ipRules = all<IpRuleRow>('SELECT * FROM ip_rules');
@@ -479,10 +556,17 @@ export function buildCaddyConfig(): Json {
     const host = workerHostname(w);
     if (host && !hosts.has(host)) hosts.set(host, { content: [{ handle: [workerHandler(w)] }] });
   }
-  for (const p of [...proxies].sort((a, b) => b.path_prefix.length - a.path_prefix.length)) {
-    const route: Route = { handle: proxyHandler(p) };
-    if (p.path_prefix) route.match = [{ path: [p.path_prefix, `${p.path_prefix.replace(/\/$/, '')}/*`] }];
-    entry(p.hostname).content.push(route);
+  // Proxy routes and load balancers share one ordering: the longest path prefix wins.
+  const forwards = [
+    ...proxies.map((p) => ({ hosts: [p.hostname], prefix: p.path_prefix, handle: () => proxyHandler(p) })),
+    ...balancers.map((lb) => ({ hosts: lbHostnames(lb), prefix: lb.path_prefix, handle: () => loadBalancerHandlers(lb) })),
+  ].sort((a, b) => b.prefix.length - a.prefix.length);
+  for (const f of forwards) {
+    for (const host of f.hosts) {
+      const route: Route = { handle: f.handle() };
+      if (f.prefix) route.match = [{ path: [f.prefix, `${f.prefix.replace(/\/$/, '')}/*`] }];
+      entry(host).content.push(route);
+    }
   }
   for (const site of sites) {
     for (const host of JSON.parse(site.hostnames) as string[]) {
@@ -647,7 +731,7 @@ export async function applyCaddyConfig(): Promise<void> {
  * that still have the old TCP admin (127.0.0.1:2019) are reached there once, and the
  * config we push moves the admin to the socket.
  */
-function postToCaddy(path: string, body: string): Promise<{ status: number; body: string }> {
+function postToCaddy(path: string, body: string, method = 'POST'): Promise<{ status: number; body: string }> {
   const viaSocket = config.caddyAdmin.startsWith('unix/');
   const socketPath = viaSocket ? config.caddyAdmin.replace(/^unix\//, '') : '';
   if (viaSocket && !existsSync(dirname(socketPath))) {
@@ -664,7 +748,7 @@ function postToCaddy(path: string, body: string): Promise<{ status: number; body
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       // Caddy only accepts Host 127.0.0.1 / ::1 / empty on its unix socket.
-      { ...target, path, method: 'POST', headers: { 'Content-Type': 'application/json', Host: '127.0.0.1', 'Content-Length': Buffer.byteLength(body) }, timeout: 30_000 },
+      { ...target, path, method, headers: { 'Content-Type': 'application/json', Host: '127.0.0.1', 'Content-Length': Buffer.byteLength(body) }, timeout: 30_000 },
       (res) => {
         let text = '';
         res.on('data', (c) => (text += c));
@@ -675,6 +759,17 @@ function postToCaddy(path: string, body: string): Promise<{ status: number; body
     req.on('timeout', () => req.destroy(new Error('Caddy no respondió')));
     req.end(body);
   });
+}
+
+/** Per-upstream counters kept by Caddy (requests in flight and recent failures). */
+export async function upstreamStats(): Promise<{ address: string; num_requests: number; fails: number }[]> {
+  if (config.dev) return [];
+  try {
+    const res = await postToCaddy('/reverse_proxy/upstreams', '', 'GET');
+    return res.status === 200 ? (JSON.parse(res.body) as { address: string; num_requests: number; fails: number }[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Applies the config now and waits; concurrent callers are serialized. */

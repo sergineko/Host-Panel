@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, ExternalLink, GitCommit, KeyRound, LayoutDashboard, RefreshCw, RotateCcw, Rocket, Trash2 } from 'lucide-react';
+import { ExternalLink, GitCommit, KeyRound, LayoutDashboard, RefreshCw, RotateCcw, Rocket, Trash2 } from 'lucide-react';
 import { api, type Deployment, type Site } from '../lib/api';
 import { parseDate, timeAgo } from '../lib/format';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, StatusBadge, StickyActions, Tabs, cx } from '../components/ui';
@@ -286,9 +286,6 @@ export default function SiteDetail() {
 
   return (
     <>
-      <Link to="/sites" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> Sitios
-      </Link>
       <PageHeader
         title={
           <span className="flex items-center gap-3">
@@ -302,6 +299,12 @@ export default function SiteDetail() {
                 {h} <ExternalLink className="size-3" />
               </a>
             ))}
+            {site.type === 'node' && (
+              <span className={site.node_effective ? 'font-mono' : 'text-danger'}>
+                {site.node_effective ? `Node.js ${site.node_effective}${site.node_version === 'latest' ? ' (última)' : ''}` : 'Node.js no instalado'}
+              </span>
+            )}
+            {site.type === 'php' && site.php_effective && <span className="font-mono">PHP {site.php_effective}</span>}
           </span>
         }
         actions={

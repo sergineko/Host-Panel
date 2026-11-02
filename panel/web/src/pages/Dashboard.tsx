@@ -1,17 +1,28 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { ArrowUpCircle, Database, Globe, Mail, Package, Rocket, Server, ShieldAlert } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ArrowUpCircle, Boxes, Database, Globe, Mail, Network, Package, Rocket, Server, ShieldAlert, Zap } from 'lucide-react';
 import { api, type TrafficPoint } from '../lib/api';
 import { bytes, compact, duration, timeAgo } from '../lib/format';
-import { Badge, Card, Empty, ErrorBox, PageHeader, Spinner, StatusBadge } from '../components/ui';
+import { Badge, Callout, Card, Empty, ErrorBox, PageHeader, Spinner, StatCard, StatusBadge } from '../components/ui';
 import { TrafficChart } from '../components/TrafficChart';
 
 interface DashboardData {
   system: { hostname: string; uptime: number; load: number[]; cpus: number; memory: { total: number; free: number }; disk: { total: number; free: number }; serverIp: string };
   services: { name: string; active: boolean; state: string }[];
   caddy: { lastError: string; lastSync: number };
-  counts: { domains: number; sites: number; proxies: number; databases: number; mailDomains: number; buckets: number; servers: number; serversOnline: number };
+  counts: {
+    domains: number;
+    sites: number;
+    proxies: number;
+    databases: number;
+    nosql: number;
+    loadBalancers: number;
+    workers: number;
+    mailDomains: number;
+    buckets: number;
+    servers: number;
+    serversOnline: number;
+  };
   traffic24h: { requests: number; bytes: number; blocked: number };
   series: TrafficPoint[];
   recentDeployments: { id: number; site_id: number; site_name: string; status: string; trigger: string; commit_message: string; created_at: string }[];
@@ -31,21 +42,6 @@ function Meter({ label, used, total, detail }: { label: string; used: number; to
         <div className={`h-full rounded-full ${tone} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
       </div>
     </div>
-  );
-}
-
-function Stat({ to, icon, label, value, sub }: { to: string; icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode }) {
-  return (
-    <Link to={to} className="group rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50">
-      <div className="flex items-center gap-2 text-[13px] text-muted">
-        <span className="transition-colors group-hover:text-accent">{icon}</span>
-        {label}
-      </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="tabular text-2xl font-semibold">{value}</span>
-        {sub && <span className="text-xs text-muted">{sub}</span>}
-      </div>
-    </Link>
   );
 }
 
@@ -74,41 +70,47 @@ export default function Dashboard() {
           </>
         }
       />
-      {d.panel.dev && (
-        <div className="mb-4 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn">
-          Modo desarrollo: los cambios no se aplican al sistema.
-        </div>
-      )}
-      {down.length > 0 && (
-        <div className="mb-4 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-[13px] text-danger">
-          Servicios detenidos: {down.map((s) => s.name).join(', ')}. Ejecuta <code className="font-mono">sudo hostpanel status</code>.
-        </div>
-      )}
-      {d.caddy.lastError && (
-        <div className="mb-4 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-[13px] text-danger">
-          El proxy rechazó la última configuración: {d.caddy.lastError.slice(0, 300)}
-        </div>
-      )}
+      <div className="mb-5 space-y-2.5 empty:hidden">
+        {d.panel.dev && <Callout tone="warn">Modo desarrollo: los cambios no se aplican al sistema.</Callout>}
+        {down.length > 0 && (
+          <Callout tone="danger" title={`Servicios detenidos: ${down.map((s) => s.name).join(', ')}`}>
+            Revisa el estado con <code className="font-mono">sudo hostpanel status</code>.
+          </Callout>
+        )}
+        {d.caddy.lastError && (
+          <Callout tone="danger" title="El proxy rechazó la última configuración">
+            <span className="font-mono text-xs break-all">{d.caddy.lastError.slice(0, 300)}</span>
+          </Callout>
+        )}
+        {pending.length > 0 && (
+          <Callout
+            tone="info"
+            title="Actualizaciones disponibles"
+            action={
+              <Link to="/system" className="inline-flex items-center gap-1 font-medium text-info hover:underline">
+                <ArrowUpCircle className="size-4" /> Ver
+              </Link>
+            }
+          >
+            {pending.map((c) => c.name).join(', ')}
+          </Callout>
+        )}
+      </div>
 
-      {pending.length > 0 && (
-        <Link to="/system" className="mb-4 flex items-center gap-3 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-[13px] transition-colors hover:border-accent/60">
-          <ArrowUpCircle className="size-4 text-accent" />
-          <span>
-            <span className="font-medium">Actualizaciones disponibles:</span> {pending.map((c) => c.name).join(', ')}
-          </span>
-          <span className="ml-auto font-medium text-accent">Ver →</span>
-        </Link>
-      )}
-
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat to="/sites" icon={<Rocket className="size-4" />} label="Sitios" value={d.counts.sites} />
-        <Stat to="/domains" icon={<Globe className="size-4" />} label="Dominios" value={d.counts.domains} />
-        <Stat to="/mail" icon={<Mail className="size-4" />} label="Con correo" value={d.counts.mailDomains} />
-        <Stat to="/databases" icon={<Database className="size-4" />} label="Bases de datos" value={d.counts.databases} />
-        <Stat to="/storage" icon={<Package className="size-4" />} label="Buckets" value={d.counts.buckets} />
-        <Stat
+      <h2 className="mb-2.5 text-[12px] font-semibold tracking-wide text-muted uppercase">Recursos</h2>
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
+        <StatCard to="/sites" icon={<Rocket />} tone="bg-accent-soft text-accent" label="Sitios web" value={d.counts.sites} />
+        <StatCard to="/domains" icon={<Globe />} tone="bg-accent-soft text-accent" label="Dominios" value={d.counts.domains} />
+        <StatCard to="/mail" icon={<Mail />} tone="bg-accent-soft text-accent" label="Dominios con correo" value={d.counts.mailDomains} />
+        <StatCard to="/databases" icon={<Database />} tone="bg-info-soft text-info" label="Bases de datos SQL" value={d.counts.databases} />
+        <StatCard to="/nosql" icon={<Boxes />} tone="bg-info-soft text-info" label="Bases de datos NoSQL" value={d.counts.nosql} />
+        <StatCard to="/storage" icon={<Package />} tone="bg-info-soft text-info" label="Almacenamiento" value={d.counts.buckets} sub="buckets" />
+        <StatCard to="/workers" icon={<Zap />} tone="bg-violet-soft text-violet" label="Workers" value={d.counts.workers} />
+        <StatCard to="/load-balancers" icon={<Network />} tone="bg-ok-soft text-ok" label="Balanceadores" value={d.counts.loadBalancers} />
+        <StatCard
           to="/servers"
-          icon={<Server className="size-4" />}
+          icon={<Server />}
+          tone="bg-ok-soft text-ok"
           label="Servidores"
           value={d.counts.servers + 1}
           sub={d.counts.servers ? `${d.counts.serversOnline + 1} en línea` : 'solo este'}
@@ -121,6 +123,7 @@ export default function Dashboard() {
           title="Tráfico · últimas 24 h"
           actions={
             <>
+              <Badge>{compact(d.traffic24h.requests)} peticiones</Badge>
               <Badge>{bytes(d.traffic24h.bytes)}</Badge>
               <Badge tone={d.traffic24h.blocked ? 'danger' : 'neutral'}>
                 <ShieldAlert className="size-3" />

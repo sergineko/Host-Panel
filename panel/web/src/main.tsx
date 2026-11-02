@@ -31,6 +31,9 @@ const Workers = lazy(() => import('./pages/Workers'));
 const WorkerDetail = lazy(() => import('./pages/WorkerDetail'));
 const Queues = lazy(() => import('./pages/Queues'));
 const QueueDetail = lazy(() => import('./pages/QueueDetail'));
+const NosqlList = lazy(() => import('./pages/Nosql').then((m) => ({ default: m.NosqlList })));
+const NosqlDetail = lazy(() => import('./pages/Nosql').then((m) => ({ default: m.NosqlDetail })));
+const LoadBalancers = lazy(() => import('./pages/LoadBalancers'));
 const KvList = lazy(() => import('./pages/Kv').then((m) => ({ default: m.KvList })));
 const KvDetail = lazy(() => import('./pages/Kv').then((m) => ({ default: m.KvDetail })));
 
@@ -85,6 +88,9 @@ createRoot(document.getElementById('root')!).render(
             <Route path="mail" element={<Mail />} />
             <Route path="databases" element={<Databases />} />
             <Route path="databases/:id" element={<DatabaseDetail />} />
+            <Route path="nosql" element={<NosqlList />} />
+            <Route path="nosql/:id" element={<NosqlDetail />} />
+            <Route path="load-balancers" element={<LoadBalancers />} />
             <Route path="storage" element={<Storage />} />
             <Route path="storage/:id" element={<BucketDetail />} />
             <Route path="servers" element={<Servers />} />

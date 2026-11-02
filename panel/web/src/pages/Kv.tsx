@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, KeySquare, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { KeySquare, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api, type KvNamespace } from '../lib/api';
 import { bytes, compact, timeAgo } from '../lib/format';
 import { Badge, Button, Card, ConfirmButton, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Textarea } from '../components/ui';
@@ -166,9 +166,6 @@ export function KvDetail() {
   if (ns.error) return <ErrorBox error={ns.error} />;
   return (
     <>
-      <Link to="/kv" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> KV
-      </Link>
       <PageHeader
         title={<span className="font-mono">{ns.data!.name}</span>}
         description={

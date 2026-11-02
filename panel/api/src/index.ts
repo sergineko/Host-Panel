@@ -25,6 +25,9 @@ import adminRoutes from './routes/admin.ts';
 import workerRoutes from './routes/workers.ts';
 import queueRoutes from './routes/queues.ts';
 import kvRoutes from './routes/kv.ts';
+import nosqlRoutes from './routes/nosql.ts';
+import loadBalancerRoutes from './routes/loadbalancers.ts';
+import nodeRoutes from './routes/nodejs.ts';
 import { startInternalServer } from './internal.ts';
 import { startCronScheduler, startQueueDispatcher } from './services/queues.ts';
 import { startKvJanitor } from './services/kv.ts';
@@ -58,6 +61,9 @@ await app.register(adminRoutes);
 await app.register(workerRoutes);
 await app.register(queueRoutes);
 await app.register(kvRoutes);
+await app.register(nosqlRoutes);
+await app.register(loadBalancerRoutes);
+await app.register(nodeRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {

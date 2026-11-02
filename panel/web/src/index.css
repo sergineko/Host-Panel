@@ -3,32 +3,38 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --bg: #f6f7f9;
+  --bg: #f4f5f7;
   --surface: #ffffff;
   --surface-2: #f1f3f6;
-  --border: #e3e6eb;
-  --fg: #14171c;
-  --muted: #5f6878;
+  --border: #e3e6ec;
+  --border-strong: #cfd4dc;
+  --fg: #101521;
+  --muted: #5e6879;
   --accent: #ea6a10;
   --accent-fg: #ffffff;
   --accent-soft: #fff1e6;
-  --ok: #138a4c;
-  --ok-soft: #e5f6ec;
-  --warn: #a15c00;
+  --ok: #12804a;
+  --ok-soft: #e4f5eb;
+  --warn: #9a5800;
   --warn-soft: #fdf2dc;
   --danger: #c62f2f;
   --danger-soft: #fdeaea;
   --info: #2459c9;
   --info-soft: #e8effd;
+  --violet: #6d4ad8;
+  --violet-soft: #efeafd;
+  --shadow-card: 0 1px 2px rgb(16 21 33 / 0.04), 0 1px 1px rgb(16 21 33 / 0.02);
+  --shadow-pop: 0 12px 32px -8px rgb(16 21 33 / 0.18), 0 2px 6px rgb(16 21 33 / 0.06);
 }
 
 .dark {
-  --bg: #0c0e12;
-  --surface: #13161c;
+  --bg: #0b0d11;
+  --surface: #12151b;
   --surface-2: #1a1e26;
-  --border: #262b35;
+  --border: #252a34;
+  --border-strong: #343b48;
   --fg: #e8eaef;
-  --muted: #8d95a5;
+  --muted: #8f97a7;
   --accent: #f6821f;
   --accent-fg: #160b02;
   --accent-soft: #2b1a0c;
@@ -40,6 +46,10 @@
   --danger-soft: #2c1414;
   --info: #7aa5ff;
   --info-soft: #141f36;
+  --violet: #a78bfa;
+  --violet-soft: #1f1835;
+  --shadow-card: 0 0 0 1px rgb(255 255 255 / 0.01);
+  --shadow-pop: 0 16px 40px -8px rgb(0 0 0 / 0.6);
 }
 
 @theme inline {
@@ -47,6 +57,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
@@ -60,6 +71,10 @@
   --color-danger-soft: var(--danger-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 }
@@ -70,6 +85,7 @@ body {
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
+  font-feature-settings: 'cv11', 'ss01';
 }
 
 ::selection {
@@ -83,4 +99,26 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Thin, quiet scrollbars (sidebar, tables, logs). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Pages fade in when the section changes. */
+@keyframes hp-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.hp-page {
+  animation: hp-page-in 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hp-page {
+    animation: none;
+  }
 }

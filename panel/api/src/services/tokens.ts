@@ -4,7 +4,7 @@ import { all, get, run, type ApiTokenRow } from '../db.ts';
 import { randomToken, sha256 } from '../lib/crypto.ts';
 import { HttpError } from '../lib/validate.ts';
 
-export type Scope = 'bucket' | 'database' | 'queue';
+export type Scope = 'bucket' | 'database' | 'queue' | 'nosql';
 
 export function createToken(name: string, scopeType: Scope, scopeId: number, canWrite: boolean) {
   const token = `hp_${randomToken(30)}`;

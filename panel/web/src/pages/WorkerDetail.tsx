@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Clock, ExternalLink, Eye, Inbox, KeyRound, Pause, Play, Plus, Rocket, RotateCcw, Send, Trash2, X } from 'lucide-react';
+import { Clock, ExternalLink, Eye, Inbox, KeyRound, Pause, Play, Plus, Rocket, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { api, type BindingType, type DeployResult, type Worker, type WorkerEvent } from '../lib/api';
 import { compact, timeAgo } from '../lib/format';
 import { BarChart } from '../components/BarChart';
@@ -469,16 +469,18 @@ function TriggersTab({ w }: { w: Worker }) {
 // --- settings: bindings, variables, secrets ----------------------------------------
 
 const BINDING_TYPES: { id: BindingType; label: string; hint: string }[] = [
-  { id: 'd1', label: 'Base de datos (D1)', hint: 'env.DB.prepare(sql).bind(…).all()' },
-  { id: 'kv', label: 'KV', hint: 'env.KV.get(clave) / put(clave, valor)' },
-  { id: 'r2', label: 'Almacenamiento (R2)', hint: 'env.BUCKET.get(clave) / put(clave, datos)' },
+  { id: 'sql', label: 'Base de datos SQL', hint: 'env.DB.prepare(sql).bind(…).all()' },
+  { id: 'nosql', label: 'Base de datos NoSQL', hint: "env.DOCS.collection('pedidos').find({ … })" },
+  { id: 'kv', label: 'Clave-valor (KV)', hint: 'env.KV.get(clave) / put(clave, valor)' },
+  { id: 'bucket', label: 'Almacenamiento', hint: 'env.BUCKET.get(clave) / put(clave, datos)' },
   { id: 'queue', label: 'Cola (productor)', hint: 'env.QUEUE.send(mensaje)' },
 ];
 
 interface Resources {
-  d1: { id: number; name: string }[];
+  sql: { id: number; name: string }[];
+  nosql: { id: number; name: string }[];
   kv: { id: number; name: string }[];
-  r2: { id: number; name: string }[];
+  bucket: { id: number; name: string }[];
   queue: { id: number; name: string }[];
 }
 
@@ -514,7 +516,7 @@ function SettingsTab({ w }: { w: Worker }) {
   return (
     <div className="space-y-4">
       <Card title="Bindings">
-        <p className="mb-3 text-[13px] text-muted">Conectan el Worker con tus bases de datos, espacios KV, buckets y colas. Disponibles como <code className="font-mono">env.NOMBRE</code>.</p>
+        <p className="mb-3 text-[13px] text-muted">Conectan el Worker con tus bases de datos SQL y NoSQL, espacios KV, almacenamiento y colas. Disponibles como <code className="font-mono">env.NOMBRE</code>.</p>
         <div className="space-y-2">
           {bindings.map((b, i) => {
             const list = resources.data?.[b.type] ?? [];
@@ -546,7 +548,7 @@ function SettingsTab({ w }: { w: Worker }) {
             );
           })}
         </div>
-        <Button size="sm" className="mt-2" icon={<Plus className="size-3.5" />} onClick={() => setBindings([...bindings, { type: 'd1', name: '', id: 0 }])}>
+        <Button size="sm" className="mt-2" icon={<Plus className="size-3.5" />} onClick={() => setBindings([...bindings, { type: 'sql', name: '', id: 0 }])}>
           Añadir binding
         </Button>
       </Card>
@@ -739,9 +741,6 @@ export default function WorkerDetail() {
   const w = q.data!;
   return (
     <>
-      <Link to="/workers" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> Workers
-      </Link>
       <PageHeader
         title={
           <span className="flex items-center gap-3">

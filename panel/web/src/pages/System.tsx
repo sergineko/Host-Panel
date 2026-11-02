@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowUpCircle, CheckCircle2, Download, RefreshCw, Star, Trash2 } from 'lucide-react';
 import { api, type Job } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { JobLog } from '../components/JobLog';
+import { NodeVersions } from '../components/NodeVersions';
 import { Badge, Button, Card, ConfirmButton, ErrorBox, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Td, cx } from '../components/ui';
 
 interface PhpState {
@@ -273,22 +275,27 @@ function History() {
   );
 }
 
+type SystemTab = 'updates' | 'php' | 'node' | 'history';
+
 export default function SystemPage() {
-  const [tab, setTab] = useState<'updates' | 'php' | 'history'>('updates');
+  const [params, setParams] = useSearchParams();
+  const tab = (['updates', 'php', 'node', 'history'].includes(params.get('tab') ?? '') ? params.get('tab') : 'updates') as SystemTab;
   return (
     <>
-      <PageHeader title="Sistema" description="Actualizaciones del panel y sus componentes, y versiones de PHP del servidor." />
+      <PageHeader title="Sistema" description="Actualizaciones del panel y sus componentes, y versiones de PHP y Node.js del servidor." />
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={(t) => setParams(t === 'updates' ? {} : { tab: t }, { replace: true })}
         tabs={[
           { id: 'updates', label: 'Actualizaciones' },
           { id: 'php', label: 'PHP' },
+          { id: 'node', label: 'Node.js' },
           { id: 'history', label: 'Historial de tareas' },
         ]}
       />
       {tab === 'updates' && <Updates />}
       {tab === 'php' && <PhpVersions />}
+      {tab === 'node' && <NodeVersions />}
       {tab === 'history' && <History />}
     </>
   );

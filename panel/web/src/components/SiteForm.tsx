@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Code2, FileCode, Hexagon, Plus, Server, Trash2 } from 'lucide-react';
-import { api, type ServerNode, type Site, type SiteType } from '../lib/api';
-import { Badge, Button, Card, Field, Input, Select, Toggle, cx } from './ui';
+import { Link } from 'react-router';
+import { api, type NodeOverview, type ServerNode, type Site, type SiteType } from '../lib/api';
+import { Badge, Button, Card, ChoiceCard, Field, Input, Select, Toggle, cx } from './ui';
 
 export interface SiteFormValue {
   name: string;
@@ -20,6 +21,7 @@ export interface SiteFormValue {
   memory_mb: number;
   auto_deploy: boolean;
   php_version: string;
+  node_version: string;
   server_ids: number[];
   lb_policy: string;
 }
@@ -40,6 +42,7 @@ export function siteToForm(s: Site): SiteFormValue {
     memory_mb: s.memory_mb,
     auto_deploy: s.auto_deploy,
     php_version: s.php_version,
+    node_version: s.node_version || 'latest',
     server_ids: s.server_ids,
     lb_policy: s.lb_policy,
   };
@@ -125,6 +128,69 @@ function Placement({ value, set, localOnly }: { value: SiteFormValue; set: <K ex
         )}
       </div>
     </Card>
+  );
+}
+
+/** Node.js version for builds and Node apps: latest installed, system, a major line or an exact version. */
+function NodeVersionField({ value, onChange, needed }: { value: string; onChange: (v: string) => void; needed: 'run' | 'build' }) {
+  const q = useQuery({ queryKey: ['nodejs'], queryFn: () => api.get<NodeOverview>('/api/nodejs') });
+  const list = q.data?.installed ?? [];
+  const majors = [...new Set(list.map((n) => n.version.split('.')[0]!))];
+  const system = list.find((n) => n.system);
+  const known = value === 'latest' || value === 'system' || majors.includes(value) || list.some((n) => n.version === value);
+  const resolved =
+    value === 'latest'
+      ? list[0]?.version
+      : value === 'system'
+        ? (system ?? list[0])?.version
+        : /^\d+$/.test(value)
+          ? list.find((n) => n.version.split('.')[0] === value)?.version
+          : list.find((n) => n.version === value)?.version;
+  return (
+    <Field
+      label="Versión de Node.js"
+      hint={
+        <>
+          {needed === 'run' ? 'Con ella se compila y se ejecuta la app.' : 'Con ella se ejecutan los comandos de instalación y build.'}{' '}
+          {resolved ? (
+            <>
+              Ahora: <span className="font-mono text-fg">{resolved}</span>.
+            </>
+          ) : q.data ? (
+            <span className="text-danger">Esa versión no está instalada.</span>
+          ) : null}{' '}
+          Gestiona las versiones en{' '}
+          <Link to="/system?tab=node" className="text-accent hover:underline">
+            Sistema → Node.js
+          </Link>
+          .
+        </>
+      }
+    >
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="latest">Siempre la última instalada{list[0] ? ` (ahora ${list[0].version})` : ''}</option>
+        {system && <option value="system">La del sistema ({system.version})</option>}
+        {majors.length > 0 && (
+          <optgroup label="Última de una versión mayor">
+            {majors.map((m) => (
+              <option key={m} value={m}>
+                Node.js {m}.x (la más alta instalada)
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {list.length > 0 && (
+          <optgroup label="Versión exacta">
+            {list.map((n) => (
+              <option key={n.version} value={n.version}>
+                Node.js {n.version}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {!known && <option value={value}>{value} (no instalada)</option>}
+      </Select>
+    </Field>
   );
 }
 
@@ -234,18 +300,7 @@ export function SiteForm({
               <div className="mb-1.5 text-[13px] font-medium">Tipo</div>
               <div className="grid gap-2 sm:grid-cols-3">
                 {typeOptions.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => set('type', t.id)}
-                    className={cx('flex items-center gap-3 rounded-md border p-3 text-left transition-colors', value.type === t.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-surface-2')}
-                  >
-                    <span className={value.type === t.id ? 'text-accent' : 'text-muted'}>{t.icon}</span>
-                    <span>
-                      <span className="block font-medium">{t.label}</span>
-                      <span className="block text-[12.5px] text-muted">{t.desc}</span>
-                    </span>
-                  </button>
+                  <ChoiceCard key={t.id} selected={value.type === t.id} onClick={() => set('type', t.id)} icon={t.icon} title={t.label} description={t.desc} />
                 ))}
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -310,6 +365,11 @@ export function SiteForm({
             </>
           )}
         </div>
+        {(value.type === 'node' || /\b(npm|npx|yarn|pnpm|node|corepack)\b/.test(`${value.install_command} ${value.build_command}`) || (value.type === 'static' && !!value.build_command)) && (
+          <div className="mt-4">
+            <NodeVersionField value={value.node_version} onChange={(v) => set('node_version', v)} needed={value.type === 'node' ? 'run' : 'build'} />
+          </div>
+        )}
         {value.type === 'static' && (
           <div className="mt-2 border-t border-border">
             <Toggle checked={value.spa} onChange={(v) => set('spa', v)} label="Aplicación de una sola página (SPA)" description="Las rutas que no existen sirven index.html (React Router, Vue Router…)." />

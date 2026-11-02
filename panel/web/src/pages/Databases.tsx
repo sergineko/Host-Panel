@@ -52,8 +52,8 @@ export default function Databases() {
   return (
     <>
       <PageHeader
-        title="Bases de datos"
-        description="MariaDB con consola SQL, API HTTP al estilo D1, copias y acceso remoto. Cada base de datos tiene su propio usuario."
+        title="Bases de datos SQL"
+        description="MariaDB con consola SQL, API HTTP, copias y acceso remoto. Cada base de datos tiene su propio usuario."
         actions={
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setOpen(true)}>
             Nueva base de datos
@@ -108,7 +108,7 @@ export default function Databases() {
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Nueva base de datos"
+        title="Nueva base de datos SQL"
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancelar</Button>

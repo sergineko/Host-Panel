@@ -7,6 +7,7 @@ import { badRequest, hostname, idParam, matchDomain, notFound, parse } from '../
 import { syncCaddy } from '../services/caddy.ts';
 import { deploymentLog, enqueueDeploy, releasesOnDisk, removeSiteFromNode } from '../services/deploy.ts';
 import { installedPhpVersions, sitePhpVersion } from '../services/php.ts';
+import { describeSpec, NODE_SPEC_RE, resolveNode } from '../services/nodejs.ts';
 import { LOCAL_SERVER_ID, remoteScript, siteServerIds } from '../services/servers.ts';
 import { nodePort, nodeUnit, removePhpPool, removeSiteSystem, stopUnit, unitLogs, writeSiteEnv } from '../services/system.ts';
 import { createDatabase, dropDatabase } from '../services/databases.ts';
@@ -64,9 +65,13 @@ const siteInput = z.object({
   php_version: z.string().regex(/^(\d+\.\d+)?$/).default(''),
   server_ids: z.array(z.number().int().min(0)).min(1, 'Elige al menos un servidor').max(20).default([0]),
   lb_policy: z.enum(['round_robin', 'least_conn', 'ip_hash', 'random', 'first']).default('round_robin'),
+  node_version: z.string().trim().regex(NODE_SPEC_RE, 'Versión de Node.js no válida').default('latest'),
 });
 
-function validateTargets(body: { php_version: string; server_ids: number[]; type: string }) {
+function validateTargets(body: { php_version: string; server_ids: number[]; type: string; node_version?: string }) {
+  if (body.type === 'node' && body.node_version && !resolveNode(body.node_version)) {
+    throw badRequest(`${describeSpec(body.node_version)}: no hay ninguna instalada en este servidor (Sistema → Node.js)`);
+  }
   if (body.php_version && !installedPhpVersions().includes(body.php_version)) {
     throw badRequest(`PHP ${body.php_version} no está instalado en este servidor (instálalo en Sistema → PHP)`);
   }
@@ -87,6 +92,8 @@ function present(site: SiteRow) {
     has_repo_token: !!repo_token,
     server_ids: siteServerIds(site),
     php_effective: site.type === 'php' ? sitePhpVersion(site) : null,
+    node_version: site.node_version || 'latest',
+    node_effective: site.source === 'wordpress' ? null : (resolveNode(site.node_version)?.version ?? null),
     spa: !!site.spa,
     auto_deploy: !!site.auto_deploy,
     port: site.type === 'node' ? nodePort(site.id, site.active_slot) : null,
@@ -200,8 +207,8 @@ export default async function siteRoutes(app: FastifyInstance) {
     const domain = matchDomain(body.hostnames[0]!, all<DomainRow>('SELECT * FROM domains'));
     const { id } = run(
       `INSERT INTO sites (name, domain_id, hostnames, type, spa, repo_url, branch, repo_token, install_command, build_command,
-         output_dir, start_command, env, memory_mb, webhook_secret, auto_deploy, php_version, server_ids, lb_policy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         output_dir, start_command, env, memory_mb, webhook_secret, auto_deploy, php_version, server_ids, lb_policy, node_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       body.name,
       domain?.id ?? null,
       JSON.stringify(body.hostnames),
@@ -221,6 +228,7 @@ export default async function siteRoutes(app: FastifyInstance) {
       body.php_version,
       JSON.stringify([...new Set(body.server_ids)]),
       body.lb_policy,
+      body.node_version,
     );
     await syncCaddy();
     audit(req.user!.username, 'site.create', body.name, req.ip);
@@ -261,7 +269,7 @@ export default async function siteRoutes(app: FastifyInstance) {
     run(
       `UPDATE sites SET name = ?, domain_id = ?, hostnames = ?, type = ?, spa = ?, repo_url = ?, branch = ?, repo_token = ?,
          install_command = ?, build_command = ?, output_dir = ?, start_command = ?, env = ?, memory_mb = ?, auto_deploy = ?,
-         php_version = ?, server_ids = ?, lb_policy = ?
+         php_version = ?, server_ids = ?, lb_policy = ?, node_version = ?
        WHERE id = ?`,
       body.name,
       domain?.id ?? null,
@@ -281,6 +289,7 @@ export default async function siteRoutes(app: FastifyInstance) {
       body.php_version,
       JSON.stringify([...new Set(body.server_ids)]),
       body.lb_policy,
+      body.node_version,
       id,
     );
     const site = getSite(id);
@@ -301,7 +310,12 @@ export default async function siteRoutes(app: FastifyInstance) {
       site.active_release &&
       (after.some((x) => !before.includes(x)) || sitePhpVersion(site) !== sitePhpVersion(prev) || site.env !== prev.env || site.memory_mb !== prev.memory_mb);
     if (site.active_release) await writeSiteEnv(site);
-    if (needsRedeploy) {
+    const nodeChanged =
+      site.active_release && site.source !== 'wordpress' && resolveNode(site.node_version)?.version !== resolveNode(prev.node_version)?.version;
+    if (nodeChanged && site.repo_url) {
+      // New Node.js version: install and build again with it (native modules, lockfiles…).
+      deploymentId = enqueueDeploy(id, `cambio a Node.js ${resolveNode(site.node_version)?.version ?? site.node_version} (${req.user!.username})`);
+    } else if (needsRedeploy || nodeChanged) {
       // Republishes the current release with the new settings (no rebuild of the repo).
       deploymentId = enqueueDeploy(id, `configuración (${req.user!.username})`, { rollbackRelease: site.active_release });
     }

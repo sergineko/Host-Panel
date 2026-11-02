@@ -75,6 +75,10 @@ export interface Site {
   port: number | null;
   php_version: string;
   php_effective: string | null;
+  /** 'latest', 'system', a major ('22') or an exact version ('22.11.0'). */
+  node_version: string;
+  /** Installed version the spec resolves to, or null when none matches. */
+  node_effective: string | null;
   server_ids: number[];
   lb_policy: string;
   source: 'git' | 'wordpress';
@@ -289,7 +293,7 @@ export interface DatabaseInfo {
 
 // --- Workers, Queues, KV ----------------------------------------------------------------
 
-export type BindingType = 'd1' | 'kv' | 'r2' | 'queue';
+export type BindingType = 'sql' | 'nosql' | 'kv' | 'bucket' | 'queue';
 
 export interface Worker {
   id: number;
@@ -365,4 +369,87 @@ export interface KvNamespace {
   size: number;
   workers: { id: number; name: string }[];
   created_at: string;
+}
+
+// --- NoSQL ----------------------------------------------------------------------------------
+
+export interface NosqlDatabase {
+  id: number;
+  name: string;
+  note: string;
+  size: number;
+  collections: number;
+  documents: number;
+  workers: { id: number; name: string }[];
+  api_url: string;
+  created_at: string;
+}
+
+export interface NosqlCollection {
+  name: string;
+  created_at: number;
+  count: number;
+  size: number;
+  indexes: { field: string; unique: boolean }[];
+}
+
+export type NosqlDoc = { _id: string } & Record<string, unknown>;
+
+// --- Load balancers -------------------------------------------------------------------------
+
+export type LbPolicy = 'round_robin' | 'weighted_round_robin' | 'least_conn' | 'ip_hash' | 'cookie' | 'first' | 'random' | 'uri_hash';
+
+export interface LbOrigin {
+  address: string;
+  weight: number;
+  enabled: boolean;
+  label: string;
+  server_id: number | null;
+}
+
+export interface LoadBalancer {
+  id: number;
+  name: string;
+  hostnames: string[];
+  path_prefix: string;
+  origins: LbOrigin[];
+  policy: LbPolicy;
+  sticky_cookie: string;
+  health_enabled: boolean;
+  health_path: string;
+  health_interval: number;
+  health_timeout: number;
+  health_status: number;
+  max_fails: number;
+  fail_duration: number;
+  retries: number;
+  preserve_host: boolean;
+  tls_skip_verify: boolean;
+  enabled: boolean;
+  note: string;
+  created_at: string;
+}
+
+export interface LbStatus {
+  checked_at: string;
+  origins: { address: string; state: 'healthy' | 'unhealthy' | 'disabled'; status: number | null; ms: number | null; error?: string; requests: number; fails: number }[];
+}
+
+// --- Node.js versions -----------------------------------------------------------------------
+
+export interface NodeInstall {
+  version: string;
+  bin: string;
+  source: string;
+  system: boolean;
+  removable: boolean;
+  sites: { id: number; name: string; spec: string }[];
+}
+
+export interface NodeOverview {
+  dir: string;
+  latest: string | null;
+  installed: NodeInstall[];
+  missing: { id: number; name: string; spec: string }[];
+  job: { id: number } | null;
 }

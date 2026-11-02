@@ -14,9 +14,9 @@ export const WORKER_TEMPLATES: Record<string, { label: string; description: stri
 `,
   },
   api: {
-    label: 'API JSON con D1',
-    description: 'Una API REST pequeña sobre una base de datos (añade el binding DB).',
-    code: `// Añade en Configuración un binding de base de datos llamado DB.
+    label: 'API JSON con SQL',
+    description: 'Una API REST pequeña sobre una base de datos MariaDB (añade el binding DB).',
+    code: `// Añade en Configuración un binding de base de datos SQL llamado DB.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -35,6 +35,38 @@ export default {
       const { texto } = await request.json();
       const { meta } = await env.DB.prepare('INSERT INTO notas (texto) VALUES (?)').bind(texto).run();
       return Response.json({ id: meta.last_row_id }, { status: 201 });
+    }
+
+    return Response.json({ error: 'No encontrado' }, { status: 404 });
+  },
+};
+`,
+  },
+  documents: {
+    label: 'API JSON con NoSQL',
+    description: 'Guarda y consulta documentos JSON sin esquema (añade el binding DOCS).',
+    code: `// Añade en Configuración un binding de base de datos NoSQL llamado DOCS.
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const notas = env.DOCS.collection('notas');
+
+    if (url.pathname === '/notas' && request.method === 'GET') {
+      const etiqueta = url.searchParams.get('etiqueta');
+      const filtro = etiqueta ? { etiquetas: { $contains: etiqueta } } : {};
+      return Response.json(await notas.find(filtro, { sort: { creada: -1 }, limit: 50 }));
+    }
+
+    if (url.pathname === '/notas' && request.method === 'POST') {
+      const { texto, etiquetas = [] } = await request.json();
+      const { insertedId } = await notas.insertOne({ texto, etiquetas, creada: Date.now() });
+      return Response.json({ id: insertedId }, { status: 201 });
+    }
+
+    const id = url.pathname.startsWith('/notas/') ? url.pathname.slice('/notas/'.length) : '';
+    if (id && request.method === 'DELETE') {
+      const { deletedCount } = await notas.deleteOne({ _id: id });
+      return Response.json({ borradas: deletedCount });
     }
 
     return Response.json({ error: 'No encontrado' }, { status: 404 });
@@ -78,7 +110,7 @@ export default {
     for (const message of batch.messages) {
       try {
         console.log('Procesando', message.id, message.body);
-        // … tu lógica (enviar un email, llamar a una API, guardar en D1…)
+        // … tu lógica (enviar un email, llamar a una API, guardar en la base de datos…)
         message.ack();
       } catch (err) {
         console.error('Fallo, se reintentará', err);
@@ -101,8 +133,8 @@ export default {
 };
 `,
   },
-  r2: {
-    label: 'Servidor de archivos R2',
+  files: {
+    label: 'Servidor de archivos',
     description: 'Sirve y sube archivos de un bucket (binding BUCKET).',
     code: `// Añade en Configuración un binding de almacenamiento llamado BUCKET.
 export default {

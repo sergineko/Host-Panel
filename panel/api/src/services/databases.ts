@@ -1,6 +1,6 @@
 /**
  * MariaDB management through the local unix socket (root uses unix_socket auth), plus a
- * D1-style layer: SQL console, table browser, HTTP query API, export/import.
+ * query layer: SQL console, table browser, HTTP query API, export/import.
  * Queries from the console/API run as the database's own user (never as root).
  */
 import { spawn } from 'node:child_process';
@@ -106,7 +106,7 @@ export async function setRemoteHosts(db: DatabaseRow, hosts: string[]) {
   for (const host of hosts) await firewall3306(host, true);
 }
 
-// --- D1-style query layer ---------------------------------------------------------------
+// --- query layer ---------------------------------------------------------------
 
 export interface QueryResult {
   columns: string[];
@@ -206,7 +206,7 @@ export async function runQuery(db: DatabaseRow, sql: string, params: Param[] = [
   });
 }
 
-/** Several statements in one transaction (all or nothing), like D1's batch(). */
+/** Several statements in one transaction (all or nothing), like a Worker's batch(). */
 export async function runBatch(db: DatabaseRow, statements: { sql: string; params?: Param[] }[], readOnly = false): Promise<QueryResult[]> {
   if (config.dev) {
     const d = devDb(db.name);

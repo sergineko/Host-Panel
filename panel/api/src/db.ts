@@ -301,6 +301,57 @@ const migrations: string[] = [
   DROP TABLE api_tokens;
   ALTER TABLE api_tokens_new RENAME TO api_tokens;
   `,
+  `
+  -- Document (NoSQL) databases: each one is its own file under <dataDir>/nosql.
+  CREATE TABLE nosql_databases (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  -- Load balancers: hostnames → pool of origins with health checks.
+  CREATE TABLE load_balancers (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    hostnames TEXT NOT NULL DEFAULT '[]',
+    path_prefix TEXT NOT NULL DEFAULT '',
+    origins TEXT NOT NULL DEFAULT '[]',
+    policy TEXT NOT NULL DEFAULT 'round_robin',
+    sticky_cookie TEXT NOT NULL DEFAULT '',
+    health_enabled INTEGER NOT NULL DEFAULT 1,
+    health_path TEXT NOT NULL DEFAULT '/',
+    health_interval INTEGER NOT NULL DEFAULT 10,
+    health_timeout INTEGER NOT NULL DEFAULT 5,
+    health_status INTEGER NOT NULL DEFAULT 200,
+    max_fails INTEGER NOT NULL DEFAULT 3,
+    fail_duration INTEGER NOT NULL DEFAULT 30,
+    retries INTEGER NOT NULL DEFAULT 2,
+    preserve_host INTEGER NOT NULL DEFAULT 1,
+    tls_skip_verify INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  -- Node.js version per site: 'latest', 'system', '22' (newest 22.x) or '22.11.0'.
+  ALTER TABLE sites ADD COLUMN node_version TEXT NOT NULL DEFAULT 'latest';
+  -- Neutral binding names (sql = MariaDB, bucket = object storage).
+  UPDATE workers SET bindings = replace(replace(bindings, '"type":"d1"', '"type":"sql"'), '"type":"r2"', '"type":"bucket"');
+  -- API tokens can also be scoped to a document database.
+  CREATE TABLE api_tokens_new (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    prefix TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('bucket','database','queue','nosql')),
+    scope_id INTEGER NOT NULL,
+    can_write INTEGER NOT NULL DEFAULT 0,
+    last_used TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT INTO api_tokens_new SELECT * FROM api_tokens;
+  DROP TABLE api_tokens;
+  ALTER TABLE api_tokens_new RENAME TO api_tokens;
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -373,6 +424,8 @@ export interface SiteRow {
   php_version: string;
   server_ids: string;
   lb_policy: string;
+  /** 'latest', 'system', a major ('22') or an exact version ('22.11.0'). */
+  node_version: string;
   /** 'git' (repository deploys) or 'wordpress' (one-click install). */
   source: 'git' | 'wordpress';
   /** App metadata as JSON (WordPress: database, admin user, locale…). */
@@ -482,7 +535,7 @@ export interface ApiTokenRow {
   name: string;
   token_hash: string;
   prefix: string;
-  scope_type: 'bucket' | 'database' | 'queue';
+  scope_type: 'bucket' | 'database' | 'queue' | 'nosql';
   scope_id: number;
   can_write: number;
   last_used: string | null;
@@ -528,4 +581,32 @@ export interface QueueMessageRow {
   visible_at: number;
   lease_id: string | null;
   created_at: number;
+}
+export interface NosqlDatabaseRow {
+  id: number;
+  name: string;
+  note: string;
+  created_at: string;
+}
+export interface LoadBalancerRow {
+  id: number;
+  name: string;
+  hostnames: string;
+  path_prefix: string;
+  origins: string;
+  policy: string;
+  sticky_cookie: string;
+  health_enabled: number;
+  health_path: string;
+  health_interval: number;
+  health_timeout: number;
+  health_status: number;
+  max_fails: number;
+  fail_duration: number;
+  retries: number;
+  preserve_host: number;
+  tls_skip_verify: number;
+  enabled: number;
+  note: string;
+  created_at: string;
 }

@@ -8,14 +8,17 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Multidominio** con **DNS** propio (PowerDNS) y editor de registros
 - **Correo** para todos los dominios (Stalwart: SMTP, IMAP, DKIM, SPF, DMARC, antispam) + **webmail** (Roundcube)
 - **Proxy inverso gráfico** (Caddy): rutas, balanceo, redirecciones y **SSL automático**
+- **Balanceadores de carga**: un dominio (o una ruta) repartido entre varios servidores de origen, con 8 políticas (por turnos, con peso, menos conexiones, por IP, cookie de sesión, principal/reserva…), comprobación de salud y estado en vivo
 - **WAF** OWASP CRS (Coraza), rate limit, reglas de IP, bloqueo de bots y **modo "bajo ataque"**
-- **Bases de datos** MariaDB con consola SQL y **API HTTP estilo D1**, copias y acceso remoto
+- **Bases de datos SQL** (MariaDB) con consola, **API HTTP**, copias y acceso remoto
+- **Bases de datos NoSQL**: documentos JSON en colecciones, filtros tipo `$gt`/`$in`/`$regex`, operadores de actualización, índices (también únicos), API HTTP, exportar/importar `.jsonl` y acceso desde Workers
 - **Workers** (API de Cloudflare Workers): editor en el navegador, rutas `dominio.com/api/*`, subdominio `nombre.workers.tu-dominio`, crons, logs en vivo, métricas y versiones
 - **Colas** estilo Cloudflare Queues: lotes, reintentos, cola de fallidos, productores por Worker o HTTP y consumidores Worker o *pull*
 - **KV**: almacén clave-valor con caducidad para los Workers
-- **Almacenamiento estilo R2**: buckets con dominio propio, CDN, CORS y API con tokens
+- **Almacenamiento** de objetos: buckets con dominio propio, CDN, CORS y API con tokens
 - **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
 - **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
+- **Varias versiones de Node.js** a la vez: cada sitio elige una versión exacta, la última de una rama (`22.x`), la del sistema o **«siempre la última instalada»**
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
 - **2FA**, sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 
@@ -82,8 +85,8 @@ Para quitar el nodo de un VPS: `sudo bash node-install.sh --uninstall`.
 
 ## Workers, colas y KV
 
-En **Workers y datos → Workers → Crear Worker** elige una plantilla (API con D1, contador KV, productor o consumidor de
-cola, cron, servidor de archivos R2…). El código usa la misma API que Cloudflare:
+En **Aplicaciones → Workers → Crear Worker** elige una plantilla (API JSON con SQL o con NoSQL, contador KV, productor o
+consumidor de cola, cron, servidor de archivos…). El código usa la misma API que Cloudflare Workers:
 
 ```js
 export default {
@@ -97,7 +100,7 @@ export default {
 };
 ```
 
-- **Bindings** (Configuración del Worker): bases de datos (`env.DB`), KV (`env.KV`), buckets (`env.BUCKET`) y colas (`env.QUEUE`), más variables y secretos cifrados.
+- **Bindings** (Configuración del Worker): base de datos SQL (`env.DB.prepare(…)`), base de datos NoSQL (`env.DOCS.collection('pedidos').find({…})`), KV (`env.KV`), almacenamiento (`env.BUCKET`) y colas (`env.QUEUE`), más variables y secretos cifrados.
 - **Disparadores**: subdominio `nombre.workers.tu-dominio` (registro `*.workers` creado automáticamente si el dominio usa el DNS del panel), rutas en tus dominios (`ejemplo.com/api/*`, tienen prioridad sobre el sitio) y crons en UTC.
 - **Despliegue seguro**: se comprueba la sintaxis y, si la nueva versión no arranca, sigue funcionando la anterior. Historial de versiones con vuelta atrás.
 - **Aislamiento**: cada Worker es un proceso con su propio usuario, solo puede leer su carpeta (modelo de permisos de Node), no puede lanzar programas ni usar sockets locales, y tiene límites de memoria y CPU. Sus bindings pasan por una API interna que solo da acceso a los recursos asignados.
@@ -108,12 +111,35 @@ export default {
 # Subir un archivo a un bucket
 curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @foto.jpg https://panel.midominio.com/api/storage/v1/imagenes/foto.jpg
 
-# Consultar una base de datos (estilo D1)
-curl -X POST https://panel.midominio.com/api/d1/v1/tienda/query -H "Authorization: Bearer $TOKEN" \
+# Consultar una base de datos SQL
+curl -X POST https://panel.midominio.com/api/sql/v1/tienda/query -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"sql":"SELECT * FROM productos WHERE precio < ?","params":[20]}'
+
+# Buscar en una base de datos NoSQL: /api/nosql/v1/<bd>/<colección>/<operación>
+curl -X POST https://panel.midominio.com/api/nosql/v1/tienda/pedidos/find -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"filter":{"total":{"$gt":50}},"sort":{"total":-1},"limit":10}'
 ```
 
-Los tokens se crean en cada bucket o base de datos (pestaña **API**).
+Los tokens se crean en cada bucket o base de datos (pestaña **API**). Operaciones NoSQL: `get`, `find`, `findOne`,
+`count`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `replaceOne`, `deleteOne`, `deleteMany`.
+
+## Versiones de Node.js
+
+Cada sitio Node (y cada build que usa `npm`, `yarn`, `pnpm`…) elige su versión en **Configuración → Versión de Node.js**:
+una exacta (`22.11.0`), la última de una rama (`22`), la del sistema o **siempre la última instalada** (por defecto).
+Se detectan las versiones en `/opt/nodejs/<versión>`, las de `n` y `nvm` en `/usr/local` y el `node` del sistema.
+
+Instalar una versión a mano:
+
+```bash
+curl -fsSLO https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz
+sudo mkdir -p /opt/nodejs/22.11.0
+sudo tar -xJf node-v22.11.0-linux-x64.tar.xz -C /opt/nodejs/22.11.0 --strip-components=1
+```
+
+También se pueden instalar desde **Sistema → Node.js** (binarios oficiales verificados con SHA-256). El panel no las
+actualiza solo: instala la nueva versión y, cuando ningún sitio dependa de la vieja, elimínala. Al cambiar de versión, el
+sitio se vuelve a compilar (si tiene repositorio) o se reinicia con la nueva.
 
 ## Despliegue automático desde GitHub
 

@@ -33,7 +33,7 @@ export const config = {
   logDir: env('HP_LOG_DIR', '/var/log/hostpanel'),
   storageDir: env('HP_STORAGE_DIR', '/srv/hostpanel/storage'),
   workersDir: env('HP_WORKERS_DIR', '/srv/hostpanel/workers'),
-  /** Internal API for Worker bindings (D1, R2, KV, Queues). Never exposed by Caddy. */
+  /** Internal API for Worker bindings (SQL, NoSQL, KV, buckets, Queues). Never exposed by Caddy. */
   internalPort: Number(env('HP_INTERNAL_PORT', '3001')),
   appDir: env('HP_APP_DIR', fileURLToPath(new URL('../../..', import.meta.url))),
   /** Max size of one uploaded object (bytes). */

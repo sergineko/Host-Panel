@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Mail, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Mail, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type DnsRecord, type Domain } from '../lib/api';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, Table, Tabs, Td } from '../components/ui';
 import { SecurityPanel } from '../components/SecurityPanel';
@@ -316,9 +316,6 @@ export default function DomainDetail() {
 
   return (
     <>
-      <Link to="/domains" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> Dominios
-      </Link>
       <PageHeader
         title={d.name}
         actions={

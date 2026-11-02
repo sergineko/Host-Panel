@@ -26,6 +26,7 @@ import {
 import * as dns from '../services/dns.ts';
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const BINDING_TABLES = { sql: 'databases', nosql: 'nosql_databases', kv: 'kv_namespaces', bucket: 'buckets', queue: 'queues' } as const;
 
 function getWorker(id: number) {
   const w = get<WorkerRow>('SELECT * FROM workers WHERE id = ?', id);
@@ -36,7 +37,7 @@ function getWorker(id: number) {
 /** Resource names for the bindings, so the UI can show "DB → tienda". */
 function bindingLabels(bindings: Binding[]) {
   return bindings.map((b) => {
-    const table = { d1: 'databases', kv: 'kv_namespaces', r2: 'buckets', queue: 'queues' }[b.type];
+    const table = BINDING_TABLES[b.type];
     const row = get<{ name: string }>(`SELECT name FROM ${table} WHERE id = ?`, b.id);
     return { ...b, resource: row?.name ?? '(eliminado)' };
   });
@@ -108,7 +109,7 @@ const settingsInput = z.object({
     .default([]),
   vars: z.record(z.string().regex(IDENT, 'Nombre de variable no válido'), z.string().max(5000)).default({}),
   bindings: z
-    .array(z.object({ type: z.enum(['d1', 'kv', 'r2', 'queue']), name: z.string().regex(IDENT, 'Nombre de binding no válido (p. ej. DB, KV, BUCKET)'), id: z.number().int().positive() }))
+    .array(z.object({ type: z.enum(['sql', 'nosql', 'kv', 'bucket', 'queue']), name: z.string().regex(IDENT, 'Nombre de binding no válido (p. ej. DB, KV, BUCKET)'), id: z.number().int().positive() }))
     .max(30)
     .default([]),
   memory_mb: z.number().int().min(64).max(2048).default(128),
@@ -120,7 +121,7 @@ function validateBindings(bindings: Binding[], vars: Record<string, string>) {
   for (const b of bindings) {
     if (names.has(b.name) || b.name in vars) throw badRequest(`El nombre ${b.name} está repetido`);
     names.add(b.name);
-    const table = { d1: 'databases', kv: 'kv_namespaces', r2: 'buckets', queue: 'queues' }[b.type];
+    const table = BINDING_TABLES[b.type];
     if (!get(`SELECT 1 FROM ${table} WHERE id = ?`, b.id)) throw badRequest(`El recurso del binding ${b.name} no existe`);
   }
 }
@@ -143,9 +144,10 @@ export default async function workerRoutesPlugin(app: FastifyInstance) {
 
   /** Everything a Worker can be bound to. */
   app.get('/api/workers/resources', async () => ({
-    d1: all<DatabaseRow>('SELECT id, name FROM databases ORDER BY name'),
+    sql: all<DatabaseRow>('SELECT id, name FROM databases ORDER BY name'),
+    nosql: all<{ id: number; name: string }>('SELECT id, name FROM nosql_databases ORDER BY name'),
     kv: all<{ id: number; name: string }>('SELECT id, name FROM kv_namespaces ORDER BY name'),
-    r2: all<BucketRow>('SELECT id, name FROM buckets ORDER BY name'),
+    bucket: all<BucketRow>('SELECT id, name FROM buckets ORDER BY name'),
     queue: all<QueueRow>('SELECT id, name FROM queues ORDER BY name'),
   }));
 

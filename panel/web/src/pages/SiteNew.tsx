@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Check, Database, Eye, EyeOff, GitBranch, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Check, Database, Eye, EyeOff, GitBranch, Lock, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api, type Site } from '../lib/api';
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, cx } from '../components/ui';
 import { HostnamesInput, SiteForm, type SiteFormValue } from '../components/SiteForm';
@@ -209,6 +209,7 @@ function GitForm({ host }: { host: string | null }) {
     memory_mb: 512,
     auto_deploy: true,
     php_version: '',
+    node_version: 'latest',
     server_ids: [0],
     lb_policy: 'round_robin',
   });
@@ -253,9 +254,6 @@ export default function SiteNew() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link to="/sites" className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
-        <ArrowLeft className="size-3.5" /> Sitios
-      </Link>
       <PageHeader title="Nuevo sitio" description="¿Qué quieres publicar?" />
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <KindCard

@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ChevronLeft, ChevronRight, Download, Play, Table2, Upload } from 'lucide-react';
 import { api, upload, type DatabaseInfo, type QueryResult } from '../lib/api';
 import { bytes, compact } from '../lib/format';
 import { CodeBlock, TokensPanel } from '../components/TokensPanel';
-import { Badge, Button, Card, Copyable, Empty, ErrorBox, Field, PageHeader, Spinner, Tabs, Textarea, cx } from '../components/ui';
+import { Badge, Button, Callout, Card, Copyable, Empty, ErrorBox, Field, PageHeader, Spinner, Tabs, Textarea, cx } from '../components/ui';
 
 interface TableInfo {
   name: string;
@@ -172,7 +172,7 @@ function Tables({ db, tables }: { db: DatabaseInfo; tables: TableInfo[] }) {
 function ApiTab({ db }: { db: DatabaseInfo }) {
   return (
     <TokensPanel basePath={`/api/databases/${db.id}`}>
-      <Card title="API HTTP (estilo D1)">
+      <Card title="API HTTP" description="Consultas SQL por HTTP con un token.">
         <p className="mb-3 text-[13px] text-muted">
           Consulta la base de datos con <code className="font-mono">fetch</code> desde cualquier sitio: funciones serverless, apps móviles o sitios en otros servidores. Usa parámetros <code className="font-mono">?</code> para evitar inyecciones SQL. Varias sentencias en un array se ejecutan en una transacción.
         </p>
@@ -286,11 +286,6 @@ export default function DatabaseDetail() {
   const db = q.data!;
   return (
     <>
-      <div className="mb-2">
-        <Link to="/databases" className="text-[13px] text-muted hover:text-fg">
-          ← Bases de datos
-        </Link>
-      </div>
       <PageHeader
         title={<span className="font-mono">{db.name}</span>}
         description={
@@ -301,9 +296,9 @@ export default function DatabaseDetail() {
         }
       />
       {!db.has_password && (
-        <div className="mb-4 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn">
+        <Callout tone="warn" className="mb-4" title="Falta la contraseña">
           Esta base de datos se creó antes de la consola: regenera su contraseña (llave en la lista) para usar la consola, la API y el acceso remoto.
-        </div>
+        </Callout>
       )}
       <Tabs
         value={tab}
