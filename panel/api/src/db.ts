@@ -478,7 +478,7 @@ export interface BackupRow {
   site_id: number;
   file: string;
   size: number;
-  kind: 'manual' | 'auto' | 'pre-restore';
+  kind: 'manual' | 'auto' | 'pre-restore' | 'pre-update';
   status: 'running' | 'success' | 'failed';
   includes: string;
   note: string;

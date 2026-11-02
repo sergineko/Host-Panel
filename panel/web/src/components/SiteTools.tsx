@@ -15,7 +15,7 @@ interface BackupItem {
   id: number;
   file: string;
   size: number;
-  kind: 'manual' | 'auto' | 'pre-restore';
+  kind: 'manual' | 'auto' | 'pre-restore' | 'pre-update';
   status: 'running' | 'success' | 'failed';
   includes: string[];
   note: string;
@@ -33,7 +33,7 @@ interface BackupsData {
   backups: BackupItem[];
 }
 
-const kindLabel = { manual: 'Manual', auto: 'Automática', 'pre-restore': 'Antes de restaurar' } as const;
+const kindLabel = { manual: 'Manual', auto: 'Automática', 'pre-restore': 'Antes de restaurar', 'pre-update': 'Antes de actualizar' } as const;
 const includeLabel = (i: string) => (i === 'files' ? 'Archivos' : i === 'shared' ? 'Compartido' : i.startsWith('db:') ? i.slice(3) : i);
 
 export function BackupsTab({ site }: { site: Site }) {
@@ -114,12 +114,12 @@ export function BackupsTab({ site }: { site: Site }) {
                       b.status === 'failed' ? 'bg-danger-soft text-danger' : b.status === 'running' ? 'bg-info-soft text-info' : 'bg-surface-2 text-muted',
                     )}
                   >
-                    {b.kind === 'auto' ? <CalendarClock /> : b.kind === 'pre-restore' ? <History /> : <Archive />}
+                    {b.kind === 'auto' ? <CalendarClock /> : b.kind === 'pre-restore' || b.kind === 'pre-update' ? <History /> : <Archive />}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 font-medium">
                       {dateTime(b.created_at)}
-                      <Badge tone={b.kind === 'auto' ? 'info' : b.kind === 'pre-restore' ? 'violet' : 'neutral'}>{kindLabel[b.kind]}</Badge>
+                      <Badge tone={b.kind === 'auto' ? 'info' : b.kind === 'pre-restore' || b.kind === 'pre-update' ? 'violet' : 'neutral'}>{kindLabel[b.kind]}</Badge>
                       {b.status === 'failed' && <Badge tone="danger">Fallida</Badge>}
                       {b.status === 'running' && <Badge tone="info">Creando…</Badge>}
                     </div>
