@@ -3,6 +3,7 @@
 Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, instalado de forma
 **nativa** (sin Docker) con un solo comando.
 
+- **WordPress en un clic** (base de datos, administrador y SSL; sin GitHub)
 - Sitios **estáticos, PHP y Node.js** con despliegue automático desde **GitHub** (webhook firmado, rollback, sin caídas)
 - **Multidominio** con **DNS** propio (PowerDNS) y editor de registros
 - **Correo** para todos los dominios (Stalwart: SMTP, IMAP, DKIM, SPF, DMARC, antispam) + **webmail** (Roundcube)
@@ -11,7 +12,7 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Bases de datos** MariaDB con consola SQL y **API HTTP estilo D1**, copias y acceso remoto
 - **Almacenamiento estilo R2**: buckets con dominio propio, CDN, CORS y API con tokens
 - **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
-- **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel
+- **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
 - **2FA**, sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 

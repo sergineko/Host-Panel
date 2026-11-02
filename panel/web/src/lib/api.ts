@@ -77,6 +77,17 @@ export interface Site {
   php_effective: string | null;
   server_ids: number[];
   lb_policy: string;
+  source: 'git' | 'wordpress';
+  wordpress: {
+    db_name: string;
+    database_id: number;
+    title: string;
+    admin_user: string;
+    admin_email: string;
+    locale: string;
+    site_url: string;
+    admin_url: string;
+  } | null;
   created_at: string;
   releases?: string[];
   last_deployment?: { id: number; status: string; commit_sha: string; commit_message: string; created_at: string } | null;

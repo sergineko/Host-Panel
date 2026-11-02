@@ -96,7 +96,8 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 |---|---|
 | **Servidores remotos** | Añadir VPS con un comando (`node-install.sh`); el panel compila y copia cada release por SSH/rsync a los servidores elegidos del sitio |
 | **Balanceador de carga** | Caddy reparte el tráfico entre este servidor y los VPS (por turnos, menos conexiones, por IP, principal/respaldo) con comprobación de salud activa y pasiva; TLS hasta cada nodo verificado con su CA interna |
-| **Varias versiones de PHP** | Instalar/desinstalar 7.4 → 8.5 desde el panel, versión por defecto, versión por sitio (en los VPS se instala sola) |
+| **Varias versiones de PHP** | Instalar/desinstalar 7.4 → 8.5 desde el panel, versión por defecto, versión por sitio (en los VPS se instala sola); el actualizador avisa de cada parche (8.5.10 → 8.5.12) |
+| **WordPress en un clic** | Asistente sin GitHub: crea la base de datos, descarga e instala WordPress con WP-CLI en el idioma elegido, protege wp-config.php y uploads, y permite restablecer la contraseña del administrador |
 | **Actualizador** | Compara versiones con GitHub/nodejs.org; actualiza panel, Caddy+WAF, Stalwart, Roundcube, Node y paquetes del sistema; actualizaciones nocturnas opcionales |
 | **Almacenamiento (estilo R2)** | Buckets públicos o privados, dominio propio con SSL y caché, CORS, explorador con subida por arrastre, API HTTP con tokens |
 | **Bases de datos (estilo D1)** | Consola SQL, explorador de tablas, API HTTP `POST /api/d1/v1/<bd>/query` con parámetros y transacciones, tokens de solo lectura, exportar/importar `.sql`, acceso remoto por IP |

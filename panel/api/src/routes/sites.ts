@@ -2,13 +2,39 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { all, audit, get, run, type DeploymentRow, type DomainRow, type ServerRow, type SiteRow } from '../db.ts';
-import { randomToken } from '../lib/crypto.ts';
+import { encrypt, randomPassword, randomToken } from '../lib/crypto.ts';
 import { badRequest, hostname, idParam, matchDomain, notFound, parse } from '../lib/validate.ts';
 import { syncCaddy } from '../services/caddy.ts';
 import { deploymentLog, enqueueDeploy, releasesOnDisk, removeSiteFromNode } from '../services/deploy.ts';
 import { installedPhpVersions, sitePhpVersion } from '../services/php.ts';
 import { LOCAL_SERVER_ID, remoteScript, siteServerIds } from '../services/servers.ts';
 import { nodePort, nodeUnit, removePhpPool, removeSiteSystem, stopUnit, unitLogs, writeSiteEnv } from '../services/system.ts';
+import { createDatabase, dropDatabase } from '../services/databases.ts';
+import { deleteScopeTokens } from '../services/tokens.ts';
+import { resetWordPressPassword, setPendingAdminPassword, WP_LOCALES, wpApp, type WordPressApp } from '../services/wordpress.ts';
+import type { DatabaseRow } from '../db.ts';
+
+const wordpressInput = z.object({
+  name: z.string().trim().min(1).max(80),
+  hostnames: z.array(hostname).min(1, 'Añade al menos un dominio').max(50),
+  title: z.string().trim().min(1, 'Pon un título al sitio').max(120),
+  admin_user: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z0-9_.@-]{3,60}$/, 'Usuario: 3-60 caracteres (letras, números, _ . @ -)')
+    .refine((v) => v.toLowerCase() !== 'admin', 'Por seguridad, usa un usuario distinto de "admin"'),
+  admin_email: z.email('Email no válido'),
+  admin_password: z.string().min(10, 'La contraseña debe tener al menos 10 caracteres').max(200).optional(),
+  locale: z.enum(WP_LOCALES).default('es_ES'),
+  php_version: z.string().regex(/^(\d+\.\d+)?$/).default(''),
+});
+
+/** Free database name for a new WordPress (wp_<site>, wp_<site>_2…). */
+function freeDbName(siteId: number) {
+  let name = `wp_${siteId}`;
+  for (let i = 2; get('SELECT 1 FROM databases WHERE name = ? OR username = ?', name, name); i++) name = `wp_${siteId}_${i}`;
+  return name;
+}
 
 const siteInput = z.object({
   name: z.string().trim().min(1).max(80),
@@ -64,6 +90,15 @@ function present(site: SiteRow) {
     spa: !!site.spa,
     auto_deploy: !!site.auto_deploy,
     port: site.type === 'node' ? nodePort(site.id, site.active_slot) : null,
+    source: site.source,
+    wordpress:
+      site.source === 'wordpress'
+        ? (() => {
+            const a = wpApp(site);
+            const host = (JSON.parse(site.hostnames) as string[])[0];
+            return { ...a, site_url: `https://${host}`, admin_url: `https://${host}/wp-admin/` };
+          })()
+        : null,
     webhook_path: `/api/webhooks/github/${site.id}`,
   };
 }
@@ -99,6 +134,63 @@ export default async function siteRoutes(app: FastifyInstance) {
         last_deployment: dep ? { id: dep.id, status: dep.status, commit_sha: dep.commit_sha, commit_message: dep.commit_message, created_at: dep.created_at } : null,
       };
     });
+  });
+
+  // One-click WordPress: site + database + install (no repository involved).
+  app.post('/api/sites/wordpress', async (req) => {
+    const body = parse(wordpressInput, req.body);
+    assertHostsFree(body.hostnames);
+    validateTargets({ php_version: body.php_version, server_ids: [LOCAL_SERVER_ID], type: 'php' });
+    const domain = matchDomain(body.hostnames[0]!, all<DomainRow>('SELECT * FROM domains'));
+    const { id } = run(
+      `INSERT INTO sites (name, domain_id, hostnames, type, webhook_secret, auto_deploy, php_version, source)
+       VALUES (?, ?, ?, 'php', ?, 0, ?, 'wordpress')`,
+      body.name,
+      domain?.id ?? null,
+      JSON.stringify(body.hostnames),
+      randomToken(24),
+      body.php_version,
+    );
+    // Its own database and user, like any other database in the panel.
+    const dbName = freeDbName(id);
+    const dbPassword = randomPassword(24);
+    try {
+      await createDatabase(dbName, dbName, dbPassword);
+    } catch (err) {
+      run('DELETE FROM sites WHERE id = ?', id);
+      throw err;
+    }
+    const dbId = run('INSERT INTO databases (name, username, note, password_enc) VALUES (?, ?, ?, ?)', dbName, dbName, `WordPress: ${body.name}`, encrypt(dbPassword)).id;
+    const app: WordPressApp = {
+      database_id: dbId,
+      db_name: dbName,
+      title: body.title,
+      admin_user: body.admin_user,
+      admin_email: body.admin_email,
+      locale: body.locale,
+    };
+    run('UPDATE sites SET app = ? WHERE id = ?', JSON.stringify(app), id);
+    const adminPassword = body.admin_password || randomPassword(20);
+    setPendingAdminPassword(id, adminPassword);
+    await syncCaddy();
+    audit(req.user!.username, 'site.create', `${body.name} (WordPress)`, req.ip);
+    const deploymentId = enqueueDeploy(id, 'instalación de WordPress');
+    const host = body.hostnames[0];
+    return {
+      ...present(getSite(id)),
+      deployment_id: deploymentId,
+      credentials: { admin_url: `https://${host}/wp-admin/`, user: body.admin_user, password: adminPassword },
+    };
+  });
+
+  app.post('/api/sites/:id/wordpress/password', async (req) => {
+    const { id } = parse(idParam, req.params);
+    const site = getSite(id);
+    if (site.source !== 'wordpress') throw badRequest('Este sitio no es un WordPress');
+    if (!site.active_release) throw badRequest('WordPress todavía no está instalado');
+    const password = await resetWordPressPassword(site);
+    audit(req.user!.username, 'wordpress.password', site.name, req.ip);
+    return { user: wpApp(site).admin_user, password };
   });
 
   app.post('/api/sites', async (req) => {
@@ -146,6 +238,22 @@ export default async function siteRoutes(app: FastifyInstance) {
     const { id } = parse(idParam, req.params);
     const prev = getSite(id);
     const body = parse(siteInput, req.body);
+    if (prev.source === 'wordpress') {
+      // WordPress has no repository or build: only name, domains and PHP version change.
+      if (body.server_ids.some((x) => x !== LOCAL_SERVER_ID)) throw badRequest('WordPress solo puede ejecutarse en este servidor');
+      Object.assign(body, {
+        type: 'php',
+        spa: false,
+        repo_url: '',
+        repo_token: undefined,
+        install_command: '',
+        build_command: '',
+        output_dir: '',
+        start_command: '',
+        auto_deploy: false,
+        server_ids: [LOCAL_SERVER_ID],
+      });
+    }
     if (body.type !== prev.type && prev.active_release) throw badRequest('No se puede cambiar el tipo de un sitio ya desplegado');
     assertHostsFree(body.hostnames, id);
     validateTargets(body);
@@ -212,6 +320,14 @@ export default async function siteRoutes(app: FastifyInstance) {
       if (server) await removeSiteFromNode(server, id).catch((err) => req.log.warn(err));
     }
     await removeSiteSystem(id);
+    if (site.source === 'wordpress') {
+      const db = get<DatabaseRow>('SELECT * FROM databases WHERE id = ?', wpApp(site).database_id);
+      if (db) {
+        await dropDatabase(db.name, db.username, JSON.parse(db.remote_hosts) as string[]).catch((err) => req.log.warn(err));
+        run('DELETE FROM databases WHERE id = ?', db.id);
+        deleteScopeTokens('database', db.id);
+      }
+    }
     audit(req.user!.username, 'site.delete', site.name, req.ip);
     return { ok: true };
   });
@@ -234,6 +350,7 @@ export default async function siteRoutes(app: FastifyInstance) {
   app.post('/api/sites/:id/rollback', async (req) => {
     const { id } = parse(idParam, req.params);
     getSite(id);
+    if (getSite(id).source === 'wordpress') throw badRequest('WordPress no usa versiones: haz copias de seguridad de la base de datos');
     const { release } = parse(z.object({ release: z.string().regex(/^[\w-]+$/) }), req.body);
     if (!releasesOnDisk(id).includes(release)) throw badRequest('Esa release ya no está disponible');
     audit(req.user!.username, 'site.rollback', `${id} → ${release}`, req.ip);

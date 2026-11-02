@@ -14,7 +14,7 @@ import {
   setDefaultPhpVersion,
   SUPPORTED_PHP,
 } from '../services/php.ts';
-import { autoUpdateMode, checkUpdates, COMPONENTS, runUpdate } from '../services/updates.ts';
+import { autoUpdateMode, checkUpdates, isValidComponent, runUpdate } from '../services/updates.ts';
 
 const phpVersion = z.object({ version: z.enum(SUPPORTED_PHP) });
 
@@ -79,7 +79,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/updates/run', async (req) => {
-    const { component } = parse(z.object({ component: z.enum([...COMPONENTS, 'all']) }), req.body);
+    const { component } = parse(z.object({ component: z.string().max(20).refine(isValidComponent, 'Componente desconocido') }), req.body);
     audit(req.user!.username, 'update.run', component, req.ip);
     return { job_id: await runUpdate(component, req.user!.username) };
   });

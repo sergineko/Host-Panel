@@ -194,6 +194,10 @@ const migrations: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  `
+  ALTER TABLE sites ADD COLUMN source TEXT NOT NULL DEFAULT 'git';
+  ALTER TABLE sites ADD COLUMN app TEXT NOT NULL DEFAULT '{}';
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -266,6 +270,10 @@ export interface SiteRow {
   php_version: string;
   server_ids: string;
   lb_policy: string;
+  /** 'git' (repository deploys) or 'wordpress' (one-click install). */
+  source: 'git' | 'wordpress';
+  /** App metadata as JSON (WordPress: database, admin user, locale…). */
+  app: string;
   created_at: string;
 }
 export interface DeploymentRow {

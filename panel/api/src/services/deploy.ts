@@ -17,6 +17,7 @@ import { all, get, run, type DeploymentRow, type ServerRow, type SiteRow } from 
 import { exec } from '../lib/exec.ts';
 import { siteContentRoutes, syncCaddy } from './caddy.ts';
 import { phpPoolDir, PHP_EXTENSIONS } from './php.ts';
+import { installWordPress, isWordPressInstalled, wpDir } from './wordpress.ts';
 import {
   buildNodeCaddyConfig,
   LOCAL_SERVER_ID,
@@ -230,6 +231,28 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
     await ensureSiteUser(site.id);
     await prepareSiteDirs(site.id);
     await writeSiteEnv(site);
+
+    if (site.source === 'wordpress') {
+      // WordPress lives in one persistent folder: install once, then only re-apply settings.
+      const installed = isWordPressInstalled(site);
+      if (installed) log('WordPress ya está instalado: se aplica la configuración (PHP y dominios).');
+      else await installWordPress(site, log);
+      const versions = await writePhpPool(site);
+      await switchCurrent(site.id, wpDir(site.id));
+      await reloadPhp(versions);
+      log(`✔ PHP ${sitePhpPool(site).version} recargado.`);
+      run(
+        "UPDATE deployments SET release = 'wordpress', commit_message = ? WHERE id = ?",
+        installed ? 'Configuración aplicada' : 'Instalación de WordPress',
+        deploymentId,
+      );
+      run("UPDATE sites SET active_release = 'wordpress' WHERE id = ?", site.id);
+      await syncCaddy();
+      run("UPDATE sites SET status = 'live' WHERE id = ?", site.id);
+      run("UPDATE deployments SET status = 'success', finished_at = datetime('now') WHERE id = ?", deploymentId);
+      log(`✔ Listo en ${Math.round((Date.now() - started) / 1000)} s`);
+      return;
+    }
 
     let release: string;
     let releaseDir: string;

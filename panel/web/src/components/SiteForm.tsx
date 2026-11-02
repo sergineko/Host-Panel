@@ -53,7 +53,7 @@ const lbPolicies = [
 ];
 
 /** Where the site runs: this server and/or remote VPS, plus PHP version and balancing. */
-function Placement({ value, set }: { value: SiteFormValue; set: <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => void }) {
+function Placement({ value, set, localOnly }: { value: SiteFormValue; set: <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => void; localOnly?: boolean }) {
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.get<{ local: ServerNode; servers: ServerNode[] }>('/api/servers') });
   const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean }[] }>('/api/php'), enabled: value.type === 'php' });
   const all = servers.data ? [servers.data.local, ...servers.data.servers] : [];
@@ -63,8 +63,9 @@ function Placement({ value, set }: { value: SiteFormValue; set: <K extends keyof
     if (next.length) set('server_ids', next);
   };
   return (
-    <Card title="Servidores y rendimiento">
+    <Card title={localOnly ? 'PHP' : 'Servidores y rendimiento'}>
       <div className="space-y-4">
+        {!localOnly && (
         <div>
           <div className="mb-1.5 text-[13px] font-medium">Dónde se ejecuta</div>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -96,7 +97,8 @@ function Placement({ value, set }: { value: SiteFormValue; set: <K extends keyof
               : 'El código se compila aquí y se copia a cada servidor elegido. SSL, WAF y analítica siguen en este servidor.'}
           </p>
         </div>
-        {value.server_ids.length > 1 && (
+        )}
+        {!localOnly && value.server_ids.length > 1 && (
           <Field label="Balanceo de carga" hint="Los servidores que no responden se retiran automáticamente y vuelven al recuperarse.">
             <Select value={value.lb_policy} onChange={(e) => set('lb_policy', e.target.value)}>
               {lbPolicies.map((p) => (
@@ -137,7 +139,7 @@ const presets: { label: string; type: SiteType; values: Partial<SiteFormValue> }
   { label: 'Astro', type: 'static', values: { build_command: 'npm run build', output_dir: 'dist', spa: false } },
   { label: 'HTML plano', type: 'static', values: { build_command: '', output_dir: '', spa: false } },
   { label: 'Laravel', type: 'php', values: { build_command: '', output_dir: 'public' } },
-  { label: 'WordPress', type: 'php', values: { build_command: '', output_dir: '' } },
+  { label: 'PHP genérico', type: 'php', values: { build_command: '', output_dir: '' } },
   { label: 'Next.js', type: 'node', values: { build_command: 'npm run build', start_command: 'npm start' } },
   { label: 'Express', type: 'node', values: { build_command: '', start_command: 'node index.js' } },
 ];
@@ -166,14 +168,56 @@ function EnvEditor({ value, onChange }: { value: Record<string, string>; onChang
   );
 }
 
-export function SiteForm({ value, onChange, editing, hasToken }: { value: SiteFormValue; onChange: (v: SiteFormValue) => void; editing?: boolean; hasToken?: boolean }) {
-  const set = <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => onChange({ ...value, [k]: v });
-  const [hostDraft, setHostDraft] = useState('');
-  const addHost = () => {
-    const h = hostDraft.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    if (h && !value.hostnames.includes(h)) set('hostnames', [...value.hostnames, h]);
-    setHostDraft('');
+/** Domain chips: type a domain and press Enter, comma or space. */
+export function HostnamesInput({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [draft, setDraft] = useState('');
+  const add = () => {
+    const h = draft.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (h && !value.includes(h)) onChange([...value, h]);
+    setDraft('');
   };
+  return (
+    <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-surface p-1.5 focus-within:border-accent">
+      {value.map((h) => (
+        <span key={h} className="inline-flex items-center gap-1 rounded bg-surface-2 py-1 pr-1 pl-2 text-[13px]">
+          {h}
+          <button type="button" className="rounded p-0.5 text-muted hover:text-danger" aria-label={`Quitar ${h}`} onClick={() => onChange(value.filter((x) => x !== h))}>
+            <Trash2 className="size-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        className="min-w-40 flex-1 bg-transparent px-1.5 outline-none focus-visible:outline-none"
+        value={draft}
+        placeholder={value.length ? 'Añadir otro…' : 'midominio.com'}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={add}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
+            e.preventDefault();
+            add();
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+export function SiteForm({
+  value,
+  onChange,
+  editing,
+  hasToken,
+  wordpress,
+}: {
+  value: SiteFormValue;
+  onChange: (v: SiteFormValue) => void;
+  editing?: boolean;
+  hasToken?: boolean;
+  /** WordPress sites: no repository, build or extra servers. */
+  wordpress?: boolean;
+}) {
+  const set = <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => onChange({ ...value, [k]: v });
 
   return (
     <div className="space-y-4">
@@ -183,29 +227,7 @@ export function SiteForm({ value, onChange, editing, hasToken }: { value: SiteFo
             <Input value={value.name} onChange={(e) => set('name', e.target.value)} placeholder="Mi web" />
           </Field>
           <Field label="Dominios del sitio" hint="El certificado SSL se emite automáticamente para cada uno.">
-            <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-surface p-1.5 focus-within:border-accent">
-              {value.hostnames.map((h) => (
-                <span key={h} className="inline-flex items-center gap-1 rounded bg-surface-2 py-1 pr-1 pl-2 text-[13px]">
-                  {h}
-                  <button type="button" className="rounded p-0.5 text-muted hover:text-danger" aria-label={`Quitar ${h}`} onClick={() => set('hostnames', value.hostnames.filter((x) => x !== h))}>
-                    <Trash2 className="size-3" />
-                  </button>
-                </span>
-              ))}
-              <input
-                className="min-w-40 flex-1 bg-transparent px-1.5 outline-none"
-                value={hostDraft}
-                placeholder={value.hostnames.length ? 'Añadir otro…' : 'midominio.com'}
-                onChange={(e) => setHostDraft(e.target.value)}
-                onBlur={addHost}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
-                    e.preventDefault();
-                    addHost();
-                  }
-                }}
-              />
-            </div>
+            <HostnamesInput value={value.hostnames} onChange={(h) => set('hostnames', h)} />
           </Field>
           {!editing && (
             <div>
@@ -241,6 +263,8 @@ export function SiteForm({ value, onChange, editing, hasToken }: { value: SiteFo
         </div>
       </Card>
 
+      {!wordpress && (
+      <>
       <Card title="Repositorio Git">
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="URL del repositorio" className="sm:col-span-2" hint="Déjalo vacío para subir los archivos manualmente.">
@@ -293,12 +317,17 @@ export function SiteForm({ value, onChange, editing, hasToken }: { value: SiteFo
         )}
       </Card>
 
-      <Placement value={value} set={set} />
+      </>
+      )}
 
-      <Card title="Variables de entorno">
-        <p className="mb-3 text-[13px] text-muted">Disponibles durante el build y en ejecución. Se guardan en un archivo que solo puede leer el usuario del sitio.</p>
-        <EnvEditor value={value.env} onChange={(env) => set('env', env)} />
-      </Card>
+      <Placement value={value} set={set} localOnly={wordpress} />
+
+      {!wordpress && (
+        <Card title="Variables de entorno">
+          <p className="mb-3 text-[13px] text-muted">Disponibles durante el build y en ejecución. Se guardan en un archivo que solo puede leer el usuario del sitio.</p>
+          <EnvEditor value={value.env} onChange={(env) => set('env', env)} />
+        </Card>
+      )}
     </div>
   );
 }

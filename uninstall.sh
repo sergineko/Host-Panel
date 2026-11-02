@@ -80,7 +80,7 @@ done
 ok "Pools PHP-FPM de HostPanel eliminados"
 
 rm -rf /opt/hostpanel /usr/local/bin/caddy /etc/caddy /var/www/roundcube /opt/stalwart/bin /opt/stalwart/etc
-rm -f /usr/local/bin/hostpanel
+rm -f /usr/local/bin/hostpanel /usr/local/bin/wp
 rm -f /etc/sysctl.d/90-hostpanel.conf /etc/fail2ban/jail.d/hostpanel.conf /etc/mysql/mariadb.conf.d/90-hostpanel.cnf /etc/mysql/mariadb.conf.d/91-hostpanel-remote.cnf
 q sysctl --system
 q systemctl restart fail2ban

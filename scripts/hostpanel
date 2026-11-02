@@ -23,7 +23,7 @@ ${B}Uso:${N} hostpanel <comando>
   reset-password [usuario] [contraseña]
                           Restablece la contraseña del panel (genera una si no se indica)
   sync-proxy              Regenera y aplica la configuración de Caddy
-  update [componente]     Actualiza todo, o solo: panel, caddy, stalwart, roundcube, node, system
+  update [componente]     Actualiza todo, o solo: panel, caddy, stalwart, roundcube, node, system, php-8.4…
   disable-2fa [usuario]   Quita la verificación en dos pasos (si perdiste el móvil)
   panel-access-reset      Quita la restricción de IPs del panel (si te quedaste fuera)
   uninstall [--purge]     Desinstala (con --purge borra también todos los datos)

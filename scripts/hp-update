@@ -4,7 +4,7 @@
 #
 #    hp-update <componente> [--log fichero]
 #
-#  Componentes: panel | caddy | stalwart | roundcube | node | system | all
+#  Componentes: panel | caddy | stalwart | roundcube | node | system | php-X.Y | all
 #  Lo lanza el panel (como unidad transitoria de systemd, para sobrevivir a su propio
 #  reinicio) o `hostpanel update`. Termina siempre con la línea "HP_JOB_DONE rc=N".
 # =====================================================================================
@@ -142,11 +142,35 @@ update_node() {
   systemctl restart hostpanel
 }
 
+update_php() {
+  local v=$1 pkgs
+  say "PHP $v"
+  [[ -x /usr/sbin/php-fpm$v ]] || { echo "PHP $v no está instalado"; exit 1; }
+  echo "Antes: $(/usr/bin/php"$v" -r 'echo PHP_VERSION;' 2>/dev/null)"
+  apt-get update
+  # Only the packages of this branch that are installed (php8.5-fpm, php8.5-mysql…).
+  pkgs=$(dpkg-query -W -f='${Package} ${Status}\n' "php${v}-*" 2>/dev/null | awk '/install ok installed/ {print $1}')
+  # shellcheck disable=SC2086
+  apt-get install --only-upgrade "${APT_OPTS[@]}" $pkgs
+  # Graceful reload: running requests finish, opcache is cleared.
+  systemctl reload "php${v}-fpm" || systemctl restart "php${v}-fpm"
+  echo "Ahora: $(/usr/bin/php"$v" -r 'echo PHP_VERSION;' 2>/dev/null)"
+}
+
+update_all_php() {
+  local bin
+  for bin in /usr/sbin/php-fpm*; do
+    [[ -x $bin ]] && update_php "${bin#/usr/sbin/php-fpm}"
+  done
+  return 0
+}
+
 update_system() {
   say "Paquetes del sistema (MariaDB, PowerDNS, PHP, seguridad)"
   apt-get update
   apt-get upgrade "${APT_OPTS[@]}"
   apt-get autoremove -y
+  if [[ -x /usr/local/bin/wp ]]; then /usr/local/bin/wp cli update --yes --allow-root || true; fi
   # Reload what may have been upgraded without restarting connections.
   for unit in $(systemctl list-units --type=service --state=running --no-legend 'php*-fpm.service' | awk '{print $1}'); do
     systemctl reload "$unit" || true
@@ -162,8 +186,10 @@ case $COMPONENT in
   roundcube) update_roundcube ;;
   node) update_node ;;
   system) update_system ;;
+  php-[0-9]*.[0-9]*) update_php "${COMPONENT#php-}" ;;
   all)
     update_system
+    update_all_php
     update_caddy
     update_stalwart
     update_roundcube

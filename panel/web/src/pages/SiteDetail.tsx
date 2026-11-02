@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, ExternalLink, GitCommit, RefreshCw, RotateCcw, Rocket, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, GitCommit, KeyRound, LayoutDashboard, RefreshCw, RotateCcw, Rocket, Trash2 } from 'lucide-react';
 import { api, type Deployment, type Site } from '../lib/api';
 import { parseDate, timeAgo } from '../lib/format';
-import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, PageHeader, Spinner, StatusBadge, StickyActions, Tabs, cx } from '../components/ui';
+import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, StatusBadge, StickyActions, Tabs, cx } from '../components/ui';
+import type { WordPressCredentials } from './SiteNew';
 import { SiteForm, siteToForm, type SiteFormValue } from '../components/SiteForm';
 
 function LogViewer({ deploymentId }: { deploymentId: number }) {
@@ -178,7 +179,8 @@ function SettingsTab({ site }: { site: Site }) {
   const save = useMutation({
     mutationFn: () => api.put<Site & { deployment_id?: number }>(`/api/sites/${site.id}`, value),
     onSuccess: (r) => {
-      if (r.deployment_id) toast.success('Configuración guardada. Se está republicando en los servidores elegidos.');
+      if (site.source === 'wordpress') toast.success('Configuración guardada y aplicada.');
+      else if (r.deployment_id) toast.success('Configuración guardada. Se está republicando en los servidores elegidos.');
       else toast.success('Configuración guardada. Despliega de nuevo para aplicar cambios de build.');
       qc.invalidateQueries({ queryKey: ['site', site.id] });
       qc.invalidateQueries({ queryKey: ['deployments', site.id] });
@@ -193,7 +195,7 @@ function SettingsTab({ site }: { site: Site }) {
         save.mutate();
       }}
     >
-      <SiteForm value={value} onChange={setValue} editing hasToken={site.has_repo_token} />
+      <SiteForm value={value} onChange={setValue} editing hasToken={site.has_repo_token} wordpress={site.source === 'wordpress'} />
       {save.error && <ErrorBox error={save.error} />}
       <StickyActions>
         <Button variant="primary" type="submit" loading={save.isPending}>
@@ -201,6 +203,46 @@ function SettingsTab({ site }: { site: Site }) {
         </Button>
       </StickyActions>
     </form>
+  );
+}
+
+function CredentialsModal({ creds, onClose }: { creds: WordPressCredentials | null; onClose: () => void }) {
+  return (
+    <Modal open={!!creds} onClose={onClose} title="Acceso a WordPress" footer={<Button variant="primary" onClick={onClose}>Hecho</Button>}>
+      <p className="mb-3 rounded-md bg-warn-soft px-3 py-2 text-[13px] text-warn">Guarda la contraseña ahora: el panel no la almacena.</p>
+      <div className="space-y-3">
+        <Field label="Panel de administración">
+          <Copyable value={creds?.admin_url ?? ''} />
+        </Field>
+        <Field label="Usuario">
+          <Copyable value={creds?.user ?? ''} />
+        </Field>
+        <Field label="Contraseña">
+          <Copyable value={creds?.password ?? ''} />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+function WordPressOverview({ site }: { site: Site }) {
+  const wp = site.wordpress!;
+  return (
+    <Card className="mb-5" padded={false}>
+      <dl className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ['Sitio', <a key="u" href={wp.site_url} target="_blank" rel="noreferrer" className="hover:text-accent">{wp.site_url.replace('https://', '')}</a>],
+          ['Administrador', <span key="a" className="font-mono">{wp.admin_user}</span>],
+          ['Base de datos', <Link key="d" to={`/databases/${wp.database_id}`} className="font-mono hover:text-accent">{wp.db_name}</Link>],
+          ['PHP', <span key="p" className="font-mono">{site.php_effective}</span>],
+        ].map(([label, value]) => (
+          <div key={label as string} className="bg-surface px-4 py-3">
+            <dt className="text-xs text-muted">{label}</dt>
+            <dd className="mt-0.5 truncate font-medium">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Card>
   );
 }
 
@@ -218,7 +260,14 @@ export default function SiteDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const [creds, setCreds] = useState<WordPressCredentials | null>((location.state as { credentials?: WordPressCredentials } | null)?.credentials ?? null);
   const tab = (params.get('tab') ?? 'deployments') as 'deployments' | 'webhook' | 'settings' | 'logs';
+  const resetWp = useMutation({
+    mutationFn: () => api.post<{ user: string; password: string }>(`/api/sites/${id}/wordpress/password`),
+    onSuccess: (r) => setCreds({ admin_url: q.data?.wordpress?.admin_url ?? '', user: r.user, password: r.password }),
+    onError: (e) => toast.error(e.message),
+  });
   const q = useQuery({ queryKey: ['site', id], queryFn: () => api.get<Site>(`/api/sites/${id}`), refetchInterval: 10000 });
   const deploy = useMutation({
     mutationFn: () => api.post<{ deployment_id: number }>(`/api/sites/${id}/deploy`),
@@ -233,6 +282,7 @@ export default function SiteDetail() {
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const site = q.data!;
+  const isWp = site.source === 'wordpress';
 
   return (
     <>
@@ -260,7 +310,11 @@ export default function SiteDetail() {
               variant="danger"
               icon={<Trash2 className="size-4" />}
               title={`Eliminar ${site.name}`}
-              message="Se borrarán los archivos, releases, procesos y el usuario del sistema de este sitio. Las bases de datos no se tocan."
+              message={
+                isWp
+                  ? 'Se borrarán WordPress, sus archivos subidos y su base de datos. No se puede deshacer: exporta la base de datos antes si la necesitas.'
+                  : 'Se borrarán los archivos, releases, procesos y el usuario del sistema de este sitio. Las bases de datos no se tocan.'
+              }
               onConfirm={async () => {
                 await api.del(`/api/sites/${id}`);
                 qc.invalidateQueries({ queryKey: ['sites'] });
@@ -270,9 +324,22 @@ export default function SiteDetail() {
             >
               Eliminar
             </ConfirmButton>
-            <Button variant="primary" icon={<Rocket className="size-4" />} loading={deploy.isPending} onClick={() => deploy.mutate()}>
-              Desplegar ahora
-            </Button>
+            {isWp ? (
+              <>
+                <Button icon={<KeyRound className="size-4" />} loading={resetWp.isPending} disabled={!site.active_release} onClick={() => resetWp.mutate()}>
+                  Restablecer contraseña
+                </Button>
+                <a href={site.wordpress?.admin_url} target="_blank" rel="noreferrer">
+                  <Button variant="primary" icon={<LayoutDashboard className="size-4" />} disabled={!site.active_release}>
+                    Panel de WordPress
+                  </Button>
+                </a>
+              </>
+            ) : (
+              <Button variant="primary" icon={<Rocket className="size-4" />} loading={deploy.isPending} onClick={() => deploy.mutate()}>
+                Desplegar ahora
+              </Button>
+            )}
           </>
         }
       />
@@ -280,16 +347,25 @@ export default function SiteDetail() {
         value={tab}
         onChange={(t) => setParams({ tab: t })}
         tabs={[
-          { id: 'deployments', label: 'Despliegues' },
-          { id: 'webhook', label: 'Webhook GitHub' },
+          { id: 'deployments', label: isWp ? 'Actividad' : 'Despliegues' },
+          ...(isWp ? [] : [{ id: 'webhook' as const, label: 'Webhook GitHub' }]),
           { id: 'settings', label: 'Configuración' },
           ...(site.type === 'node' ? [{ id: 'logs' as const, label: 'Logs' }] : []),
         ]}
       />
+      {isWp && <WordPressOverview site={site} />}
       {tab === 'deployments' && <DeploymentsTab site={site} />}
       {tab === 'webhook' && <WebhookTab site={site} />}
       {tab === 'settings' && <SettingsTab key={site.id} site={site} />}
       {tab === 'logs' && <RuntimeLogs site={site} />}
+      <CredentialsModal
+        creds={creds}
+        onClose={() => {
+          setCreds(null);
+          // Don't show the password again on reload / back navigation.
+          navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+        }}
+      />
     </>
   );
 }

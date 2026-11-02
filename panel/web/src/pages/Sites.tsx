@@ -14,7 +14,7 @@ export default function Sites() {
     <>
       <PageHeader
         title="Sitios web"
-        description="Despliegue continuo desde GitHub con releases atómicas y rollback."
+        description="WordPress en un clic o despliegue continuo desde GitHub con versiones y vuelta atrás."
         actions={
           <Link to="/sites/new">
             <Button variant="primary" icon={<Plus className="size-4" />}>
@@ -32,7 +32,7 @@ export default function Sites() {
           <Empty
             icon={<Rocket className="size-6" />}
             title="Todavía no hay sitios"
-            description="Crea un sitio estático, PHP o Node.js y conéctalo a tu repositorio."
+            description="Instala WordPress en un clic o conecta un repositorio con tu web estática, PHP o Node.js."
             action={
               <Link to="/sites/new">
                 <Button variant="primary">Crear el primer sitio</Button>
@@ -56,7 +56,7 @@ export default function Sites() {
                 <StatusBadge status={s.status} />
               </div>
               <div className="mt-4 flex items-center gap-2 text-[13px] text-muted">
-                <Badge>{typeLabel[s.type]}</Badge>
+                <Badge tone={s.source === 'wordpress' ? 'info' : 'neutral'}>{s.source === 'wordpress' ? 'WordPress' : typeLabel[s.type]}</Badge>
                 {s.repo_url && (
                   <span className="flex min-w-0 items-center gap-1">
                     <GitBranch className="size-3.5 shrink-0" />

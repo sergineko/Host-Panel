@@ -22,6 +22,7 @@ import { matchDomain } from '../lib/validate.ts';
 import { nodePort, phpSocket, sitePaths } from './system.ts';
 import { HEALTH_PATH, LOCAL_SERVER_ID, NODE_PORT, nodeUpstream, siteIsLocalOnly, siteServerIds, type NodeInfo } from './servers.ts';
 import { bucketDir } from './storage.ts';
+import { WP_BLOCKED_PATHS } from './wordpress.ts';
 
 type Json = Record<string, unknown>;
 interface Route {
@@ -257,7 +258,13 @@ export function siteContentRoutes(site: SiteRow): Route[] {
   if (site.type === 'node') {
     return [{ handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${nodePort(site.id, site.active_slot)}` }] }] }];
   }
-  if (site.type === 'php') return phpRoutes(current, phpSocket(site.id));
+  if (site.type === 'php') {
+    const routes = phpRoutes(current, phpSocket(site.id));
+    if (site.source === 'wordpress') {
+      routes.unshift({ match: [{ path: WP_BLOCKED_PATHS }], handle: [{ handler: 'static_response', status_code: 404 }] });
+    }
+    return routes;
+  }
   return staticSiteRoutes(current, !!site.spa);
 }
 

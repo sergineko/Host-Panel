@@ -10,12 +10,21 @@ import { getSetting, setSetting } from '../db.ts';
 import { exec, tryExec } from '../lib/exec.ts';
 import { HttpError } from '../lib/validate.ts';
 import { runningJob, startDetachedJob, startJob } from './jobs.ts';
+import { installedPhpVersions } from './php.ts';
 
 export const COMPONENTS = ['panel', 'caddy', 'stalwart', 'roundcube', 'node', 'system'] as const;
-export type ComponentId = (typeof COMPONENTS)[number] | 'all';
+/** Fixed components, "all", or one installed PHP branch ("php-8.5"). */
+export type ComponentId = string;
+export const PHP_COMPONENT = /^php-(\d+\.\d+)$/;
+
+export function isValidComponent(id: string) {
+  if (id === 'all' || (COMPONENTS as readonly string[]).includes(id)) return true;
+  const m = PHP_COMPONENT.exec(id);
+  return !!m && installedPhpVersions().includes(m[1]!);
+}
 
 export interface ComponentStatus {
-  id: (typeof COMPONENTS)[number];
+  id: string;
   name: string;
   description: string;
   current: string;
@@ -63,6 +72,36 @@ function newer(latest: string, current: string) {
   return false;
 }
 
+/**
+ * Each installed PHP branch: exact installed version vs the newest in the repository
+ * (e.g. 8.5.10 → 8.5.12). Uses apt's view, refreshed with "Comprobar".
+ */
+async function phpVersions(): Promise<ComponentStatus[]> {
+  const out: ComponentStatus[] = [];
+  for (const v of installedPhpVersions()) {
+    let current = '';
+    let latest = '';
+    if (config.dev) {
+      current = `${v}.10`;
+      latest = `${v}.12`;
+    } else {
+      const policy = await tryExec('apt-cache', ['policy', `php${v}-fpm`], { env: { LANG: 'C' } });
+      current = firstVersion(/Installed:\s*(\S+)/.exec(policy.output)?.[1] ?? '');
+      latest = firstVersion(/Candidate:\s*(\S+)/.exec(policy.output)?.[1] ?? '');
+      if (!current) current = (await tryExec(`/usr/bin/php${v}`, ['-r', 'echo PHP_VERSION;'])).output.trim();
+    }
+    out.push({
+      id: `php-${v}`,
+      name: `PHP ${v}`,
+      description: 'Intérprete y extensiones de esta versión (parches de seguridad y correcciones)',
+      current: current || 'no instalado',
+      latest,
+      updateAvailable: !!current && newer(latest, current),
+    });
+  }
+  return out;
+}
+
 async function panelVersions() {
   if (config.dev || !existsSync(join(config.appDir, '.git'))) return { current: config.dev ? 'dev' : 'local', latest: '' };
   const current = (await tryExec('git', ['-C', config.appDir, 'rev-parse', '--short=7', 'HEAD'])).output.trim();
@@ -90,6 +129,8 @@ async function currentVersions(): Promise<Record<(typeof COMPONENTS)[number], st
 
 export async function checkUpdates(force = false): Promise<ComponentStatus[]> {
   if (cache && !force && Date.now() - cache.at < 3600_000) return cache.data;
+  // A manual check refreshes apt's package lists (PHP and system packages).
+  if (force && !config.dev) await tryExec('apt-get', ['update', '-qq'], { timeoutMs: 120_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
   const current = await currentVersions();
   const panel = await panelVersions();
   const latest: Record<string, string> = {
@@ -113,6 +154,8 @@ export async function checkUpdates(force = false): Promise<ComponentStatus[]> {
   });
   // Mail components are only relevant when mail is installed.
   const result = data.filter((c) => config.mailHostname || (c.id !== 'stalwart' && c.id !== 'roundcube'));
+  // PHP branches go right after the runtime components.
+  result.splice(result.findIndex((c) => c.id === 'system'), 0, ...(await phpVersions()));
   cache = { at: Date.now(), data: result };
   setSetting('updates_checked_at', new Date().toISOString());
   return result;
@@ -121,7 +164,10 @@ export async function checkUpdates(force = false): Promise<ComponentStatus[]> {
 /** Starts an update. Returns the job id (its log is visible in the panel). */
 export async function runUpdate(component: ComponentId, user: string): Promise<number> {
   if (runningJob('update')) throw new HttpError(409, 'Ya hay una actualización en curso');
-  const title = component === 'all' ? 'Actualizar todo' : `Actualizar ${NAMES[component][0]}`;
+  if (!isValidComponent(component)) throw new HttpError(400, `Componente desconocido: ${component}`);
+  const php = PHP_COMPONENT.exec(component);
+  const title =
+    component === 'all' ? 'Actualizar todo' : php ? `Actualizar PHP ${php[1]}` : `Actualizar ${NAMES[component as (typeof COMPONENTS)[number]][0]}`;
   cache = null;
   if (config.dev) {
     return startJob('update', title, user, async (log) => {
