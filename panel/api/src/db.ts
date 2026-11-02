@@ -352,6 +352,43 @@ const migrations: string[] = [
   DROP TABLE api_tokens;
   ALTER TABLE api_tokens_new RENAME TO api_tokens;
   `,
+  `
+  -- Per-site PHP settings (memory_limit, upload size…) as JSON.
+  ALTER TABLE sites ADD COLUMN php_settings TEXT NOT NULL DEFAULT '{}';
+  -- Automatic backups: 'off', 'daily' or 'weekly', keeping the newest N.
+  ALTER TABLE sites ADD COLUMN backup_schedule TEXT NOT NULL DEFAULT 'off';
+  ALTER TABLE sites ADD COLUMN backup_keep INTEGER NOT NULL DEFAULT 7;
+  -- SQL databases saved with the site's files (WordPress adds its own automatically).
+  ALTER TABLE sites ADD COLUMN backup_databases TEXT NOT NULL DEFAULT '[]';
+  CREATE TABLE backups (
+    id INTEGER PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    file TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'manual',
+    status TEXT NOT NULL DEFAULT 'running',
+    includes TEXT NOT NULL DEFAULT '[]',
+    note TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+  );
+  CREATE INDEX backups_site ON backups(site_id, id);
+  -- Scheduled commands run as the site user (like cPanel cron jobs).
+  CREATE TABLE site_crons (
+    id INTEGER PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    schedule TEXT NOT NULL,
+    command TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run TEXT,
+    last_status TEXT NOT NULL DEFAULT '',
+    last_duration INTEGER NOT NULL DEFAULT 0,
+    last_output TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -430,6 +467,36 @@ export interface SiteRow {
   source: 'git' | 'wordpress';
   /** App metadata as JSON (WordPress: database, admin user, locale…). */
   app: string;
+  php_settings: string;
+  backup_schedule: 'off' | 'daily' | 'weekly';
+  backup_keep: number;
+  backup_databases: string;
+  created_at: string;
+}
+export interface BackupRow {
+  id: number;
+  site_id: number;
+  file: string;
+  size: number;
+  kind: 'manual' | 'auto' | 'pre-restore';
+  status: 'running' | 'success' | 'failed';
+  includes: string;
+  note: string;
+  error: string;
+  created_at: string;
+  finished_at: string | null;
+}
+export interface SiteCronRow {
+  id: number;
+  site_id: number;
+  schedule: string;
+  command: string;
+  note: string;
+  enabled: number;
+  last_run: string | null;
+  last_status: '' | 'success' | 'failed' | 'running';
+  last_duration: number;
+  last_output: string;
   created_at: string;
 }
 export interface DeploymentRow {

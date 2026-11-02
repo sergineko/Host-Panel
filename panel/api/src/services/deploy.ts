@@ -293,8 +293,15 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
           log(`✔ Commit ${sha.slice(0, 7)}: ${message}`);
         }
       } else {
-        log('Sin repositorio: se publica una carpeta vacía (conecta un repo para desplegar código).');
         await exec('mkdir', ['-p', releaseDir]);
+        // Files managed from the panel (no Git): each new release starts from the live one.
+        const previous = site.active_release ? join(p.releases, site.active_release) : '';
+        if (previous && (config.dev || existsSync(previous))) {
+          log(`Sin repositorio: se copian los archivos de la versión actual (${site.active_release}).`);
+          await exec('cp', ['-a', `${previous}/.`, releaseDir]);
+        } else {
+          log('Sin repositorio: se publica una carpeta vacía. Sube tus archivos desde la pestaña Archivos o conecta un repositorio.');
+        }
       }
       await chownSite(site.id, releaseDir);
 

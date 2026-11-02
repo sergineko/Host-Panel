@@ -4,6 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ExternalLink, GitCommit, KeyRound, LayoutDashboard, RefreshCw, RotateCcw, Rocket, Trash2 } from 'lucide-react';
 import { api, type Deployment, type Site } from '../lib/api';
+import { CertificateList } from '../components/Certificates';
+import { FileManager } from '../components/FileManager';
+import { BackupsTab, CronsTab, PhpSettingsCard } from '../components/SiteTools';
 import { parseDate, timeAgo } from '../lib/format';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, StatusBadge, StickyActions, Tabs, cx } from '../components/ui';
 import type { WordPressCredentials } from './SiteNew';
@@ -262,7 +265,7 @@ export default function SiteDetail() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const [creds, setCreds] = useState<WordPressCredentials | null>((location.state as { credentials?: WordPressCredentials } | null)?.credentials ?? null);
-  const tab = (params.get('tab') ?? 'deployments') as 'deployments' | 'webhook' | 'settings' | 'logs';
+  const tab = (params.get('tab') ?? 'deployments') as 'deployments' | 'files' | 'ssl' | 'backups' | 'cron' | 'webhook' | 'settings' | 'logs';
   const resetWp = useMutation({
     mutationFn: () => api.post<{ user: string; password: string }>(`/api/sites/${id}/wordpress/password`),
     onSuccess: (r) => setCreds({ admin_url: q.data?.wordpress?.admin_url ?? '', user: r.user, password: r.password }),
@@ -315,8 +318,8 @@ export default function SiteDetail() {
               title={`Eliminar ${site.name}`}
               message={
                 isWp
-                  ? 'Se borrarán WordPress, sus archivos subidos y su base de datos. No se puede deshacer: exporta la base de datos antes si la necesitas.'
-                  : 'Se borrarán los archivos, releases, procesos y el usuario del sistema de este sitio. Las bases de datos no se tocan.'
+                  ? 'Se borrarán WordPress, sus archivos subidos, su base de datos y sus copias de seguridad. No se puede deshacer: descarga una copia antes si la necesitas.'
+                  : 'Se borrarán los archivos, releases, copias de seguridad, tareas cron, procesos y el usuario del sistema de este sitio. Las bases de datos no se tocan.'
               }
               onConfirm={async () => {
                 await api.del(`/api/sites/${id}`);
@@ -351,15 +354,28 @@ export default function SiteDetail() {
         onChange={(t) => setParams({ tab: t })}
         tabs={[
           { id: 'deployments', label: isWp ? 'Actividad' : 'Despliegues' },
-          ...(isWp ? [] : [{ id: 'webhook' as const, label: 'Webhook GitHub' }]),
+          { id: 'files', label: 'Archivos' },
+          { id: 'ssl', label: 'Dominios y SSL' },
+          { id: 'backups', label: 'Copias' },
+          { id: 'cron', label: 'Cron' },
+          ...(site.type !== 'static' ? [{ id: 'logs' as const, label: site.type === 'php' ? 'Errores PHP' : 'Logs' }] : []),
+          ...(isWp || !site.repo_url ? [] : [{ id: 'webhook' as const, label: 'Webhook GitHub' }]),
           { id: 'settings', label: 'Configuración' },
-          ...(site.type === 'node' ? [{ id: 'logs' as const, label: 'Logs' }] : []),
         ]}
       />
       {isWp && <WordPressOverview site={site} />}
       {tab === 'deployments' && <DeploymentsTab site={site} />}
+      {tab === 'files' && <FileManager siteId={site.id} />}
+      {tab === 'ssl' && <CertificateList hosts={site.hostnames} title="Certificados de este sitio" />}
+      {tab === 'backups' && <BackupsTab site={site} />}
+      {tab === 'cron' && <CronsTab site={site} />}
       {tab === 'webhook' && <WebhookTab site={site} />}
-      {tab === 'settings' && <SettingsTab key={site.id} site={site} />}
+      {tab === 'settings' && (
+        <div className="space-y-4">
+          {site.type === 'php' && <PhpSettingsCard site={site} />}
+          <SettingsTab key={site.id} site={site} />
+        </div>
+      )}
       {tab === 'logs' && <RuntimeLogs site={site} />}
       <CredentialsModal
         creds={creds}

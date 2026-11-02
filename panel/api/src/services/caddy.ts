@@ -645,6 +645,11 @@ export function buildCaddyConfig(): Json {
     logging: {
       logs: {
         default: { exclude: [`http.log.access.${ACCESS_LOGGER}`] },
+        tls: {
+          writer: { output: 'file', filename: TLS_LOG(), roll_size_mb: 10, roll_keep: 3 },
+          encoder: { format: 'json' },
+          include: ['tls'],
+        },
         [ACCESS_LOGGER]: {
           writer: { output: 'file', filename: logFile, roll_size_mb: 100, roll_keep: 5 },
           encoder: { format: 'json' },
@@ -692,12 +697,44 @@ export function buildCaddyConfig(): Json {
         automation: {
           policies: [
             { subjects: [config.serverIp, '127.0.0.1'], issuers: [{ module: 'internal' }] },
-            { issuers: [{ module: 'acme', email: config.adminEmail }] },
+            // Every other hostname gets its own Let's Encrypt certificate (HTTP-01 / TLS-ALPN-01),
+            // renewed by Caddy when a third of its lifetime is left.
+            { issuers: [letsEncryptIssuer()] },
           ],
         },
       },
     },
   };
+}
+
+// --- certificates ----------------------------------------------------------------------
+
+export const LETS_ENCRYPT_CA = 'https://acme-v02.api.letsencrypt.org/directory';
+/** Folder name Caddy uses for Let's Encrypt certificates in its storage. */
+export const LETS_ENCRYPT_STORAGE = 'acme-v02.api.letsencrypt.org-directory';
+/** Caddy's TLS events (obtain, renew, errors) go here so the panel can show them per domain. */
+export const TLS_LOG = () => join(config.logDir, 'caddy-tls.log');
+
+/** Let's Encrypt rejects placeholder addresses, so those are left out (an account works without email). */
+export function acmeEmail(): string {
+  const email = config.adminEmail.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(email)) return '';
+  const domain = email.split('@')[1]!;
+  if (/(^|\.)(example\.(com|org|net)|localhost|local|test|invalid|example)$/.test(domain)) return '';
+  return email;
+}
+
+function letsEncryptIssuer(): Json {
+  const email = acmeEmail();
+  return { module: 'acme', ca: LETS_ENCRYPT_CA, ...(email ? { email } : {}) };
+}
+
+/** Hostnames that get a public certificate (every host routed on ports 80/443). */
+export function publicHostnames(): string[] {
+  const cfg = buildCaddyConfig() as { apps: { http: { servers: { web: { routes: { match?: { host?: string[] }[] }[] } } } } };
+  const out = new Set<string>();
+  for (const r of cfg.apps.http.servers.web.routes) for (const h of r.match?.[0]?.host ?? []) out.add(h);
+  return [...out].filter((h) => !/^[\d.]+$|:|^localhost$/.test(h)).sort();
 }
 
 // --- apply ---------------------------------------------------------------------------
@@ -711,13 +748,14 @@ export function caddyState() {
   return { lastError, lastSync };
 }
 
-export async function applyCaddyConfig(): Promise<void> {
+/** force: reload even if nothing changed (restarts pending certificate requests). */
+export async function applyCaddyConfig(force = false): Promise<void> {
   const body = JSON.stringify(buildCaddyConfig());
   if (config.dev) {
     lastSync = Date.now();
     return;
   }
-  const res = await postToCaddy('/load', body);
+  const res = await postToCaddy('/load', body, 'POST', force ? { 'Cache-Control': 'must-revalidate' } : {});
   if (res.status !== 200) {
     lastError = res.body;
     throw new Error(`Caddy rechazó la configuración: ${lastError}`);
@@ -731,7 +769,7 @@ export async function applyCaddyConfig(): Promise<void> {
  * that still have the old TCP admin (127.0.0.1:2019) are reached there once, and the
  * config we push moves the admin to the socket.
  */
-function postToCaddy(path: string, body: string, method = 'POST'): Promise<{ status: number; body: string }> {
+function postToCaddy(path: string, body: string, method = 'POST', extraHeaders: Record<string, string> = {}): Promise<{ status: number; body: string }> {
   const viaSocket = config.caddyAdmin.startsWith('unix/');
   const socketPath = viaSocket ? config.caddyAdmin.replace(/^unix\//, '') : '';
   if (viaSocket && !existsSync(dirname(socketPath))) {
@@ -748,7 +786,7 @@ function postToCaddy(path: string, body: string, method = 'POST'): Promise<{ sta
   return new Promise((resolve, reject) => {
     const req = httpRequest(
       // Caddy only accepts Host 127.0.0.1 / ::1 / empty on its unix socket.
-      { ...target, path, method, headers: { 'Content-Type': 'application/json', Host: '127.0.0.1', 'Content-Length': Buffer.byteLength(body) }, timeout: 30_000 },
+      { ...target, path, method, headers: { 'Content-Type': 'application/json', Host: '127.0.0.1', 'Content-Length': Buffer.byteLength(body), ...extraHeaders }, timeout: 30_000 },
       (res) => {
         let text = '';
         res.on('data', (c) => (text += c));
@@ -773,8 +811,8 @@ export async function upstreamStats(): Promise<{ address: string; num_requests: 
 }
 
 /** Applies the config now and waits; concurrent callers are serialized. */
-export function syncCaddy(): Promise<void> {
-  pending = pending.catch(() => {}).then(applyCaddyConfig);
+export function syncCaddy(force = false): Promise<void> {
+  pending = pending.catch(() => {}).then(() => applyCaddyConfig(force));
   return pending;
 }
 

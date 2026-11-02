@@ -292,7 +292,7 @@ export function SiteForm({
           <Field label="Nombre">
             <Input value={value.name} onChange={(e) => set('name', e.target.value)} placeholder="Mi web" />
           </Field>
-          <Field label="Dominios del sitio" hint="El certificado SSL se emite automáticamente para cada uno.">
+          <Field label="Dominios del sitio" hint="Cada dominio recibe su propio certificado de Let's Encrypt, que se renueva solo. Apunta su DNS a este servidor.">
             <HostnamesInput value={value.hostnames} onChange={(h) => set('hostnames', h)} />
           </Field>
           {!editing && (

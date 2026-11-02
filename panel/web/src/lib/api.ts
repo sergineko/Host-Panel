@@ -453,3 +453,31 @@ export interface NodeOverview {
   missing: { id: number; name: string; spec: string }[];
   job: { id: number } | null;
 }
+
+// --- SSL certificates (Let's Encrypt) -------------------------------------------------------
+
+export type CertState = 'valid' | 'renewing' | 'expired' | 'pending' | 'error';
+
+export interface CertInfo {
+  host: string;
+  owner: string;
+  owner_link: string | null;
+  state: CertState;
+  issuer: string | null;
+  lets_encrypt: boolean;
+  not_before: string | null;
+  not_after: string | null;
+  days_left: number | null;
+  renews_from: string | null;
+  dns: { ok: boolean; a: string[]; aaaa: string[]; problem: string | null };
+  error: { message: string; hint: string; at: string; retry_at: string | null } | null;
+}
+
+export interface CertOverview {
+  issuer: string;
+  email: string;
+  configured_email: string;
+  server_ip: string;
+  server_ipv6: string | null;
+  certificates: CertInfo[];
+}

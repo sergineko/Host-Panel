@@ -148,7 +148,7 @@ function LbModal({ initial, id, onClose }: { initial: LbForm; id?: number; onClo
               <Input value={f.path_prefix} onChange={(e) => set('path_prefix', e.target.value.trim())} placeholder="/" className="font-mono" />
             </Field>
           </div>
-          <Field label="Dominios" hint="Apunta su DNS a este servidor. El certificado SSL se emite solo.">
+          <Field label="Dominios" hint="Apunta su DNS a este servidor. Cada uno recibe su certificado de Let's Encrypt automáticamente.">
             <HostnamesInput value={f.hostnames} onChange={(v) => set('hostnames', v)} />
           </Field>
         </section>

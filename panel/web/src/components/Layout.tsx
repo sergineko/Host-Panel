@@ -6,11 +6,13 @@ import {
   ArrowLeftRight,
   ArrowUpCircle,
   Boxes,
+  ChevronDown,
   Cpu,
   Database,
   Globe,
   Inbox,
   KeySquare,
+  Lock,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -61,6 +63,7 @@ export const nav: NavItem[] = [
   { to: '/workers', label: 'Workers', icon: <Zap />, group: 'Aplicaciones', keywords: 'funciones serverless edge javascript cron' },
   { to: '/queues', label: 'Colas', icon: <Inbox />, group: 'Aplicaciones', keywords: 'queues mensajes segundo plano' },
   { to: '/load-balancers', label: 'Balanceadores de carga', icon: <Network />, group: 'Red', keywords: 'load balancer balanceo origenes alta disponibilidad' },
+  { to: '/certificates', label: 'Certificados SSL', icon: <Lock />, group: 'Red', keywords: 'ssl https tls lets encrypt certificado renovación' },
   { to: '/proxy', label: 'Proxy inverso', icon: <ArrowLeftRight />, group: 'Red', keywords: 'caddy rutas redirecciones' },
   { to: '/security', label: 'Seguridad y WAF', icon: <ShieldCheck />, group: 'Red', keywords: 'firewall ip bloqueo ataque waf' },
   { to: '/servers', label: 'Servidores', icon: <Server />, group: 'Red', keywords: 'vps nodos' },
@@ -105,6 +108,32 @@ export function Logo() {
       </div>
     </div>
   );
+}
+
+const COLLAPSED_KEY = 'hp-nav-collapsed';
+
+/** Menu groups the user folded, remembered in this browser. */
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggle = (name: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      } catch {
+        /* private mode: keep it for this visit only */
+      }
+      return next;
+    });
+  return { collapsed, toggle };
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -159,6 +188,7 @@ export function Layout({ username }: { username: string }) {
     [],
   );
   const section = useMemo(() => sectionFor(location.pathname), [location.pathname]);
+  const { collapsed, toggle } = useCollapsedGroups();
 
   const groups = useMemo(() => {
     const out: { name?: string; items: NavItem[] }[] = [];
@@ -196,38 +226,55 @@ export function Layout({ username }: { username: string }) {
         </button>
       </div>
       <div className="flex-1 space-y-4 overflow-y-auto px-3 pt-1 pb-4">
-        {groups.map((g) => (
-          <div key={g.name ?? 'top'}>
-            {g.name && <div className="mb-1 px-2.5 text-[11px] font-semibold tracking-wider text-muted/80 uppercase">{g.name}</div>}
-            <div className="space-y-px">
-              {g.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === '/'}
-                  className={({ isActive }) =>
-                    cx(
-                      'group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition-colors [&_svg]:size-4',
-                      isActive ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
-                    )
-                  }
+        {groups.map((g) => {
+          const folded = !!g.name && collapsed.has(g.name);
+          // A folded group still shows the page you are on, so you never lose your place.
+          const items = folded ? g.items.filter((i) => i.to === section?.to) : g.items;
+          return (
+            <div key={g.name ?? 'top'}>
+              {g.name && (
+                <button
+                  type="button"
+                  onClick={() => toggle(g.name!)}
+                  aria-expanded={!folded}
+                  className="group/h mb-1 flex w-full items-center gap-1 rounded-md px-2.5 py-0.5 text-[11px] font-semibold tracking-wider text-muted/80 uppercase transition-colors hover:text-fg"
                 >
-                  {({ isActive }) => (
-                    <>
-                      <span className={cx('transition-colors', isActive ? 'text-accent' : 'text-muted/80 group-hover:text-fg')}>{item.icon}</span>
-                      <span className="flex-1 truncate">{item.label}</span>
-                      {item.to === '/system' && pendingUpdates > 0 && (
-                        <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg" title="Actualizaciones disponibles">
-                          {pendingUpdates}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                  <span className="flex-1 text-left">{g.name}</span>
+                  {folded && pendingUpdates > 0 && g.items.some((i) => i.to === '/system') && (
+                    <span className="size-1.5 rounded-full bg-accent" title="Actualizaciones disponibles" />
+                  )}                  <ChevronDown className={cx('size-3.5 transition-transform duration-200 motion-reduce:transition-none', folded && '-rotate-90')} />
+                </button>
+              )}
+              <div className="space-y-px">
+                {items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    className={({ isActive }) =>
+                      cx(
+                        'group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition-colors [&_svg]:size-4',
+                        isActive ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <span className={cx('transition-colors', isActive ? 'text-accent' : 'text-muted/80 group-hover:text-fg')}>{item.icon}</span>
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {item.to === '/system' && pendingUpdates > 0 && (
+                          <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-accent-fg" title="Actualizaciones disponibles">
+                            {pendingUpdates}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="flex items-center justify-between gap-2 border-t border-border p-3">
         <div className="flex min-w-0 items-center gap-2.5 pl-1">

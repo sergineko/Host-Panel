@@ -4,21 +4,52 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
+import { html } from '@codemirror/lang-html';
+import { css } from '@codemirror/lang-css';
+import { php } from '@codemirror/lang-php';
+import { json } from '@codemirror/lang-json';
 import { oneDark } from '@codemirror/theme-one-dark';
 
-/** JavaScript editor (CodeMirror 6). Loaded only on the Worker page. */
+export type EditorLanguage = 'javascript' | 'typescript' | 'html' | 'css' | 'php' | 'json' | 'text';
+
+/** Language for a file name (file manager). */
+export function languageFor(name: string): EditorLanguage {
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  if (['js', 'mjs', 'cjs', 'jsx'].includes(ext)) return 'javascript';
+  if (['ts', 'tsx', 'mts'].includes(ext)) return 'typescript';
+  if (['html', 'htm', 'vue', 'svelte', 'svg', 'xml'].includes(ext)) return 'html';
+  if (['css', 'scss', 'less'].includes(ext)) return 'css';
+  if (['php', 'phtml'].includes(ext)) return 'php';
+  if (['json', 'webmanifest'].includes(ext)) return 'json';
+  return 'text';
+}
+
+const languageExtension = (lang: EditorLanguage) =>
+  ({
+    javascript: [javascript({ jsx: true })],
+    typescript: [javascript({ typescript: true, jsx: true })],
+    html: [html()],
+    css: [css()],
+    php: [php()],
+    json: [json()],
+    text: [],
+  })[lang];
+
+/** Code editor (CodeMirror 6), loaded on demand (Workers and the file manager). */
 export default function CodeEditor({
   value,
   onChange,
   onSave,
   readOnly,
   className,
+  language = 'javascript',
 }: {
   value: string;
   onChange?: (v: string) => void;
   onSave?: () => void;
   readOnly?: boolean;
   className?: string;
+  language?: EditorLanguage;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -33,7 +64,7 @@ export default function CodeEditor({
         doc: value,
         extensions: [
           basicSetup,
-          javascript(),
+          languageExtension(language),
           oneDark,
           keymap.of([
             indentWithTab,

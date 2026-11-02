@@ -4,8 +4,13 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 **nativa** (sin Docker) con un solo comando.
 
 - **WordPress en un clic** (base de datos, administrador y SSL; sin GitHub)
+- **Administrador de archivos** por sitio: subir arrastrando, editor con resaltado (HTML, CSS, JS, PHP, JSON), renombrar, mover, descomprimir .zip/.tar.gz y descargar
+- **Copias de seguridad** por sitio (archivos + bases de datos), manuales o diarias/semanales con retención, descarga y restauración con copia previa automática
+- **Tareas cron** por sitio con atajos de frecuencia, ejecución manual y salida de la última ejecución
+- **Ajustes de PHP por sitio** (memoria, subida, tiempo, variables, zona horaria, mostrar errores) y registro de errores PHP en el panel
 - Sitios **estáticos, PHP y Node.js** con despliegue automático desde **GitHub** (webhook firmado, rollback, sin caídas)
 - **Multidominio** con **DNS** propio (PowerDNS) y editor de registros
+- **SSL de Let's Encrypt por dominio**: cada dominio vinculado a un sitio, Worker, balanceador o proxy recibe su certificado y se renueva solo; el panel muestra caducidad, renovación y el motivo si falla (DNS, puertos, límites)
 - **Correo** para todos los dominios (Stalwart: SMTP, IMAP, DKIM, SPF, DMARC, antispam) + **webmail** (Roundcube)
 - **Proxy inverso gráfico** (Caddy): rutas, balanceo, redirecciones y **SSL automático**
 - **Balanceadores de carga**: un dominio (o una ruta) repartido entre varios servidores de origen, con 8 políticas (por turnos, con peso, menos conexiones, por IP, cookie de sesión, principal/reserva…), comprobación de salud y estado en vivo

@@ -12,6 +12,8 @@ import { LOCAL_SERVER_ID, remoteScript, siteServerIds } from '../services/server
 import { nodePort, nodeUnit, removePhpPool, removeSiteSystem, stopUnit, unitLogs, writeSiteEnv } from '../services/system.ts';
 import { createDatabase, dropDatabase } from '../services/databases.ts';
 import { deleteScopeTokens } from '../services/tokens.ts';
+import { removeSiteBackups } from '../services/backups.ts';
+import { phpErrorLog } from '../services/system.ts';
 import { resetWordPressPassword, setPendingAdminPassword, WP_LOCALES, wpApp, type WordPressApp } from '../services/wordpress.ts';
 import type { DatabaseRow } from '../db.ts';
 
@@ -334,6 +336,7 @@ export default async function siteRoutes(app: FastifyInstance) {
       if (server) await removeSiteFromNode(server, id).catch((err) => req.log.warn(err));
     }
     await removeSiteSystem(id);
+    removeSiteBackups(id);
     if (site.source === 'wordpress') {
       const db = get<DatabaseRow>('SELECT * FROM databases WHERE id = ?', wpApp(site).database_id);
       if (db) {
@@ -389,7 +392,8 @@ export default async function siteRoutes(app: FastifyInstance) {
   app.get('/api/sites/:id/logs', async (req) => {
     const { id } = parse(idParam, req.params);
     const site = getSite(id);
-    if (site.type !== 'node') return { logs: 'Los logs de ejecución solo están disponibles para sitios Node.js. Consulta la analítica para ver las peticiones.' };
+    if (site.type === 'php') return { logs: (await phpErrorLog(site.id, 300)) || 'Sin errores de PHP registrados. 🎉' };
+    if (site.type !== 'node') return { logs: 'Los sitios estáticos no generan logs de ejecución. Consulta la analítica para ver las peticiones.' };
     const unit = nodeUnit(id, site.active_slot);
     const parts: string[] = [];
     for (const sid of siteServerIds(site)) {

@@ -28,6 +28,10 @@ import kvRoutes from './routes/kv.ts';
 import nosqlRoutes from './routes/nosql.ts';
 import loadBalancerRoutes from './routes/loadbalancers.ts';
 import nodeRoutes from './routes/nodejs.ts';
+import certificateRoutes from './routes/certificates.ts';
+import siteToolRoutes from './routes/sitetools.ts';
+import { startBackupScheduler } from './services/backups.ts';
+import { startSiteCronScheduler } from './services/sitecrons.ts';
 import { startInternalServer } from './internal.ts';
 import { startCronScheduler, startQueueDispatcher } from './services/queues.ts';
 import { startKvJanitor } from './services/kv.ts';
@@ -64,6 +68,8 @@ await app.register(kvRoutes);
 await app.register(nosqlRoutes);
 await app.register(loadBalancerRoutes);
 await app.register(nodeRoutes);
+await app.register(certificateRoutes);
+await app.register(siteToolRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {
@@ -97,6 +103,8 @@ await app.listen({ host: config.listenHost, port: config.listenPort });
 await startInternalServer();
 startQueueDispatcher();
 startCronScheduler();
+startSiteCronScheduler();
+startBackupScheduler();
 startKvJanitor();
 startWorkersOnBoot().catch((err) => console.error('Workers:', err.message));
 console.log(`HostPanel escuchando en http://${config.listenHost}:${config.listenPort}${config.dev ? ' (modo desarrollo)' : ''}`);

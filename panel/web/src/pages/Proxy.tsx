@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeftRight, ArrowRight, Code, Lock, Pencil, Plus, Trash2 } from 'lucide-react';
@@ -279,12 +280,13 @@ export default function Proxy() {
                 {status.data?.lastSync ? `Última sincronización: ${new Date(status.data.lastSync).toLocaleString()}` : 'Sin sincronizar todavía.'}
               </p>
             )}
-            <div className="mt-4">
-              <div className="mb-2 text-[13px] font-medium">Certificados SSL emitidos ({status.data?.certificates.length ?? 0})</div>
-              <div className="flex flex-wrap gap-1.5">
-                {status.data?.certificates.map((c) => <Badge key={c} tone="ok"><Lock className="size-3" />{c}</Badge>)}
-              </div>
-            </div>
+            <p className="mt-4 text-[13px] text-muted">
+              Hay {status.data?.certificates.length ?? 0} certificados SSL guardados. Consulta su estado, caducidad y renovación en{' '}
+              <Link to="/certificates" className="font-medium text-accent hover:underline">
+                Certificados SSL
+              </Link>
+              .
+            </p>
           </Card>
           <Card title={<span className="flex items-center gap-2"><Code className="size-4" /> Configuración generada (solo lectura)</span>}>
             <pre className="max-h-[480px] overflow-auto rounded-md bg-surface-2 p-3 font-mono text-[11.5px]">{config.data ? JSON.stringify(config.data, null, 2) : '…'}</pre>

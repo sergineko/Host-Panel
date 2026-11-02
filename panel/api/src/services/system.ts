@@ -126,7 +126,36 @@ export async function writeSiteEnv(site: SiteRow) {
 
 // --- PHP-FPM pools -------------------------------------------------------------------
 
-function phpPoolConfig(name: string, user: string, socket: string, root: string, tmp: string, env: Record<string, string>) {
+/** Per-site PHP settings (cPanel's MultiPHP INI Editor). */
+export interface PhpSettings {
+  memory_limit_mb: number;
+  upload_max_mb: number;
+  max_execution_time: number;
+  max_input_vars: number;
+  display_errors: boolean;
+  timezone: string;
+}
+
+export const PHP_DEFAULTS: PhpSettings = {
+  memory_limit_mb: 256,
+  upload_max_mb: 64,
+  max_execution_time: 60,
+  max_input_vars: 3000,
+  display_errors: false,
+  timezone: 'Europe/Madrid',
+};
+
+export function phpSettings(site: Pick<SiteRow, 'php_settings'>): PhpSettings {
+  let saved: Partial<PhpSettings> = {};
+  try {
+    saved = JSON.parse(site.php_settings || '{}') as Partial<PhpSettings>;
+  } catch {
+    /* keep defaults */
+  }
+  return { ...PHP_DEFAULTS, ...saved };
+}
+
+function phpPoolConfig(name: string, user: string, socket: string, root: string, tmp: string, env: Record<string, string>, ini: PhpSettings = PHP_DEFAULTS) {
   const envLines = Object.entries(env)
     .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
     .map(([k, v]) => `env[${k}] = "${String(v).replace(/"/g, '')}"`)
@@ -148,9 +177,15 @@ php_admin_value[open_basedir] = ${root}/:/tmp/:/usr/share/php/
 php_admin_value[upload_tmp_dir] = ${tmp}
 php_admin_value[session.save_path] = ${tmp}
 php_admin_value[sys_temp_dir] = ${tmp}
-php_admin_value[memory_limit] = 256M
-php_admin_value[upload_max_filesize] = 64M
-php_admin_value[post_max_size] = 64M
+php_admin_value[memory_limit] = ${ini.memory_limit_mb}M
+php_admin_value[upload_max_filesize] = ${ini.upload_max_mb}M
+php_admin_value[post_max_size] = ${ini.upload_max_mb + 8}M
+php_value[max_execution_time] = ${ini.max_execution_time}
+php_admin_value[max_input_vars] = ${ini.max_input_vars}
+php_flag[display_errors] = ${ini.display_errors ? 'on' : 'off'}
+php_admin_flag[log_errors] = on
+php_admin_value[error_log] = ${tmp}/php-error.log
+php_value[date.timezone] = ${ini.timezone.replace(/[^\w/+-]/g, '')}
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec
 php_admin_flag[expose_php] = off
 ${envLines}
@@ -168,6 +203,7 @@ export function sitePhpPool(site: SiteRow) {
     p.root,
     p.tmp,
     JSON.parse(site.env) as Record<string, string>,
+    phpSettings(site),
   );
   return { version, path: join(phpPoolDir(version), `hp-${site.id}.conf`), content };
 }
@@ -193,6 +229,18 @@ export async function writePhpPool(site: SiteRow): Promise<string[]> {
 
 export async function removePhpPool(id: number) {
   for (const v of installedPhpVersions()) await removeSystemFile(join(phpPoolDir(v), `hp-${id}.conf`));
+}
+
+/** Last lines of a PHP site's error log (errors, warnings and fatal errors). */
+export async function phpErrorLog(id: number, lines = 200): Promise<string> {
+  if (config.dev) {
+    return [
+      `[02-Nov-2026 18:02:11 Europe/Madrid] PHP Warning:  Undefined array key "page" in ${sitePaths(id).root}/current/index.php on line 14`,
+      `[02-Nov-2026 18:40:57 Europe/Madrid] PHP Fatal error:  Uncaught Error: Call to undefined function mysql_connect() in ${sitePaths(id).root}/current/db.php:3`,
+    ].join('\n');
+  }
+  const out = await exec('tail', ['-n', String(lines), join(sitePaths(id).tmp, 'php-error.log')]).catch(() => '');
+  return out.trim();
 }
 
 /** Graceful reload: running requests finish, opcache is cleared. */

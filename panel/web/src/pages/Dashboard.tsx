@@ -5,6 +5,7 @@ import { api, type TrafficPoint } from '../lib/api';
 import { bytes, compact, duration, timeAgo } from '../lib/format';
 import { Badge, Callout, Card, Empty, ErrorBox, PageHeader, Spinner, StatCard, StatusBadge } from '../components/ui';
 import { TrafficChart } from '../components/TrafficChart';
+import { certHasProblem, useCertificates } from '../components/Certificates';
 
 interface DashboardData {
   system: { hostname: string; uptime: number; load: number[]; cpus: number; memory: { total: number; free: number }; disk: { total: number; free: number }; serverIp: string };
@@ -53,6 +54,8 @@ export default function Dashboard() {
     staleTime: 3600_000,
   });
   const pending = updates.data?.components.filter((c) => c.updateAvailable) ?? [];
+  const certs = useCertificates();
+  const badCerts = certs.data?.certificates.filter(certHasProblem) ?? [];
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const d = q.data!;
@@ -80,6 +83,20 @@ export default function Dashboard() {
         {d.caddy.lastError && (
           <Callout tone="danger" title="El proxy rechazó la última configuración">
             <span className="font-mono text-xs break-all">{d.caddy.lastError.slice(0, 300)}</span>
+          </Callout>
+        )}
+        {badCerts.length > 0 && (
+          <Callout
+            tone="danger"
+            title={`${badCerts.length} certificado${badCerts.length === 1 ? '' : 's'} SSL con problemas`}
+            action={
+              <Link to="/certificates" className="font-medium text-danger hover:underline">
+                Revisar
+              </Link>
+            }
+          >
+            {badCerts.slice(0, 4).map((c) => c.host).join(', ')}
+            {badCerts.length > 4 ? '…' : ''}
           </Callout>
         )}
         {pending.length > 0 && (
