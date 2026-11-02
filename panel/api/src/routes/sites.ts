@@ -17,6 +17,7 @@ import { removeSiteBackups } from '../services/backups.ts';
 import { phpErrorLog } from '../services/system.ts';
 import { resetWordPressPassword, setPendingAdminPassword, WP_LOCALES, wpApp, type WordPressApp } from '../services/wordpress.ts';
 import type { DatabaseRow } from '../db.ts';
+import { forgetStaging } from '../services/wptoolkit.ts';
 
 const wordpressInput = z.object({
   name: z.string().trim().min(1).max(80),
@@ -342,6 +343,7 @@ export default async function siteRoutes(app: FastifyInstance) {
     await removeSiteSystem(id);
     removeSiteBackups(id);
     if (site.source === 'wordpress') {
+      forgetStaging(site);
       const db = get<DatabaseRow>('SELECT * FROM databases WHERE id = ?', wpApp(site).database_id);
       if (db) {
         await dropDatabase(db.name, db.username, JSON.parse(db.remote_hosts) as string[]).catch((err) => req.log.warn(err));

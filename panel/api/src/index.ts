@@ -31,6 +31,8 @@ import nodeRoutes from './routes/nodejs.ts';
 import certificateRoutes from './routes/certificates.ts';
 import siteToolRoutes from './routes/sitetools.ts';
 import siteAccessRoutes from './routes/siteaccess.ts';
+import wpToolkitRoutes from './routes/wptoolkit.ts';
+import { startWpAutoUpdates } from './services/wptoolkit.ts';
 import { startBackupScheduler } from './services/backups.ts';
 import { startSiteCronScheduler } from './services/sitecrons.ts';
 import { startInternalServer } from './internal.ts';
@@ -72,6 +74,7 @@ await app.register(nodeRoutes);
 await app.register(certificateRoutes);
 await app.register(siteToolRoutes);
 await app.register(siteAccessRoutes);
+await app.register(wpToolkitRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {
@@ -107,6 +110,7 @@ startQueueDispatcher();
 startCronScheduler();
 startSiteCronScheduler();
 startBackupScheduler();
+startWpAutoUpdates();
 startKvJanitor();
 startWorkersOnBoot().catch((err) => console.error('Workers:', err.message));
 console.log(`HostPanel escuchando en http://${config.listenHost}:${config.listenPort}${config.dev ? ' (modo desarrollo)' : ''}`);
