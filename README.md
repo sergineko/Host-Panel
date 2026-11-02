@@ -29,7 +29,7 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
 - **2FA**, sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 
-Detalles de arquitectura y hoja de ruta en [PLAN.md](PLAN.md).
+Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); hoja de ruta en [PLAN.md](PLAN.md).
 
 ## Instalar
 
@@ -79,6 +79,132 @@ sudo hostpanel uninstall --purge
 | `hostpanel info` | URLs y configuración |
 
 También se actualiza desde el panel: **Sistema → Actualizaciones**.
+
+## Cómo está construido
+
+Todo se instala de forma **nativa** (sin Docker): paquetes del sistema y binarios oficiales gestionados por
+**systemd**. El panel es el centro: guarda su estado en SQLite y configura cada servicio por su API local, así que
+nunca hay que editar a mano la configuración de Caddy, PowerDNS o Stalwart.
+
+```
+   80 · 443 web · 2087 panel             53 DNS          25 · 465 · 587 · 993 · 4190
+                │                           │                       │
+                ▼                           ▼                       ▼
+┌────────────────────────────────┐  ┌────────────────┐  ┌───────────────────────┐
+│ Caddy                          │  │ PowerDNS       │  │ Stalwart Mail         │
+│ SSL Let's Encrypt · HTTP/3     │  │ DNS · DNSSEC   │  │ SMTP · IMAP · Sieve   │
+│ WAF Coraza + OWASP CRS         │  │ SQLite         │  │ DKIM · SPF · DMARC    │
+│ rate limit · balanceo · caché  │  └────────────────┘  │ antispam              │
+└────────────────────────────────┘                      └───────────────────────┘
+     │          ▲ admin API            ▲ API              ▲ API
+     │          │ (socket unix)        │                  │
+     │    ┌─────────────────────────────────────────────┐
+     │    │ HostPanel · Node.js 24 · Fastify · SQLite   │──► MariaDB (socket)
+     │    │ API REST + interfaz React                   │──► systemd · usuarios del sistema
+     │    │ despliegues · copias · cron · analítica     │──► SSH/rsync a otros VPS
+     │    │ colas · KV · NoSQL · certificados           │
+     │    └─────────────────────────────────────────────┘
+     │                             │ API interna 127.0.0.1:3001
+     ▼                             ▼
+  estáticos · PHP-FPM (un pool    Workers (un proceso aislado por Worker)
+  por sitio) · Node.js (unidad    bindings: SQL, NoSQL, KV,
+  systemd por sitio)              almacenamiento y colas
+```
+
+### Componentes
+
+| Servicio | Qué se usa | De dónde sale | Para qué |
+|---|---|---|---|
+| **Web y proxy** | [Caddy 2](https://caddyserver.com) con los módulos `coraza-caddy` y `caddy-ratelimit` | Binario oficial de caddyserver.com → `/usr/local/bin/caddy` | Sirve todos los dominios, SSL, WAF, rate limit, proxy inverso, balanceadores, HTTP/3, caché y compresión zstd/gzip |
+| **Certificados SSL** | Let's Encrypt (ACME) gestionado por Caddy | — | Un certificado por dominio, emitido al vincularlo y renovado solo cuando le queda un tercio de vida |
+| **WAF** | [Coraza](https://coraza.io) + OWASP Core Rule Set | Dentro de Caddy | Bloquea inyecciones SQL, XSS, escaneos… con modo detección o bloqueo por dominio |
+| **DNS** | [PowerDNS Authoritative](https://www.powerdns.com) con backend SQLite y DNSSEC | apt `pdns-server` + `pdns-backend-sqlite3` | DNS autoritativo de todos los dominios (`ns1`/`ns2.<dominio>`), editado por su API HTTP en `127.0.0.1:8081` |
+| **Correo** | [Stalwart Mail Server](https://stalw.art) con almacén RocksDB | Binario oficial de GitHub → `/opt/stalwart` | SMTP (25, 465, 587), IMAP (993), ManageSieve (4190), DKIM/SPF/DMARC, antispam, filtros y respuestas automáticas |
+| **Webmail** | [Roundcube](https://roundcube.net) con SQLite | Tarball oficial → `/var/www/roundcube` | `webmail.<dominio>` para todos los dominios con correo |
+| **Bases de datos SQL** | MariaDB | apt `mariadb-server` | Una base de datos con su propio usuario por proyecto; consola, API HTTP y acceso remoto por IP |
+| **Bases de datos NoSQL** | SQLite (`node:sqlite`), un archivo por base de datos | Incluido en el panel | Documentos JSON por colección con filtros, índices y API |
+| **Almacenamiento de objetos** | Carpetas en disco (`/srv/hostpanel/storage`) | Incluido en el panel | Buckets públicos o privados, servidos por Caddy en su propio dominio o por API con token |
+| **PHP** | PHP-FPM 7.4 → 8.5 | Repositorio de Ondřej Surý | Un pool aislado por sitio (su usuario, `open_basedir`, sus ajustes); varias versiones a la vez. Incluye Composer y WP-CLI |
+| **Node.js** | Node 24 para el panel; cualquier versión para los sitios | NodeSource; versiones extra en `/opt/nodejs/<versión>` | Ejecuta el panel, compila los sitios y sirve las apps Node |
+| **Workers** | Runtime propio compatible con la API de Cloudflare Workers (`panel/runtime/worker-host.mjs`) | Incluido en el panel | Funciones JavaScript con rutas, subdominio, crons, colas y bindings |
+| **Colas y KV** | Tablas en la base de datos del panel | Incluido en el panel | Mensajería entre Workers y almacén clave-valor con caducidad |
+| **SFTP** | OpenSSH `internal-sftp` con chroot | Sistema | Cuentas que solo ven la carpeta de su sitio, sin consola |
+| **Seguridad del sistema** | ufw, fail2ban, unattended-upgrades, BBR | apt | Cortafuegos, bloqueo de ataques a SSH, parches automáticos y red optimizada |
+
+### El panel por dentro
+
+- **Backend** (`panel/api`): Node.js 24 ejecuta TypeScript directamente (sin compilar), con **Fastify 5**, validación con
+  **Zod** y **SQLite** nativo (`node:sqlite`) en `/var/lib/hostpanel/hostpanel.db`. Escucha solo en `127.0.0.1:3000`;
+  Caddy lo publica en el puerto **2087** y, si hay dominio, en `panel.<dominio>`.
+- **Frontend** (`panel/web`): **React 19**, **Vite**, **Tailwind CSS 4**, **TanStack Query** y **React Router 7**. Cada
+  página se descarga al visitarla por primera vez.
+- **Caddy se configura entero desde el panel**: el panel genera su configuración JSON a partir de la base de datos y la
+  carga por la API de administración, que solo escucha en un socket unix accesible para root. Si Caddy rechaza un cambio,
+  se mantiene la configuración anterior.
+- **Tareas largas** (instalar PHP o Node.js, actualizaciones, copias, restauraciones) corren como trabajos en segundo
+  plano con su registro visible en **Sistema → Historial de tareas**.
+- **Programadores internos**: crons de Workers y de sitios (cada minuto, en UTC), copias automáticas (cada 10 minutos
+  comprueba cuáles tocan), entrega de colas, limpieza de KV, actualizaciones nocturnas opcionales y copia del
+  certificado de `mail.<dominio>` a Stalwart (cada hora).
+- **Analítica**: Caddy escribe un registro de accesos en JSON (`/var/log/hostpanel/access.log`); el panel lo lee
+  continuamente y lo agrupa por dominio y hora.
+
+### Cómo se publica un sitio
+
+1. **Origen**: un repositorio Git (clonado en una *release* nueva), WordPress instalado con WP-CLI, o archivos subidos
+   desde el panel o por SFTP.
+2. **Compilación** en este servidor, como el usuario Linux del sitio (`hp-<id>`), con su versión de Node.js:
+   `npm ci`/`composer install` y el comando de build.
+3. **Publicación sin cortes**:
+   - **Estáticos y PHP**: el enlace `current` pasa de forma atómica a la nueva release y PHP-FPM se recarga.
+   - **Node.js**: la nueva versión arranca en el otro puerto (*blue/green*); el tráfico cambia solo cuando responde y la
+     anterior se detiene después.
+4. Si algo falla, la versión anterior sigue sirviendo. Se guardan las últimas 5 releases para volver atrás con un clic.
+
+Cada sitio vive en `/srv/hostpanel/sites/<id>/`:
+
+```
+releases/<fecha>-<n>/   versiones desplegadas
+current → releases/…    lo que se sirve
+shared/                 archivos persistentes (subidas, .env); no se toca al desplegar
+home/ · tmp/            casa y temporales del usuario del sitio (sesiones PHP, registro de errores)
+```
+
+### Varios servidores
+
+Este servidor actúa siempre como **entrada**: termina el SSL, aplica el WAF y la analítica, y reparte el tráfico.
+Los VPS añadidos con `node-install.sh` ejecutan Caddy como origen interno en el puerto **8443** (TLS con una CA
+interna, abierto solo para la IP del panel), PHP-FPM y Node.js. El código se compila aquí y se copia por SSH/rsync.
+
+### Dónde está cada cosa
+
+| Ruta | Contenido |
+|---|---|
+| `/opt/hostpanel` | Código del panel |
+| `/etc/hostpanel/hostpanel.env` | Configuración (dominio, IP, email para SSL, claves internas) |
+| `/var/lib/hostpanel/` | Base de datos del panel, bases NoSQL (`nosql/`) y copias de seguridad (`backups/site-<id>/`) |
+| `/srv/hostpanel/sites/` · `storage/` · `workers/` | Sitios, buckets de almacenamiento y Workers |
+| `/var/log/hostpanel/` | Registro de accesos (analítica) y de certificados (`caddy-tls.log`) |
+| `/var/lib/caddy/` | Certificados SSL de Caddy |
+| `/var/lib/powerdns/pdns.sqlite3` | Zonas DNS |
+| `/opt/stalwart/` | Servidor de correo (buzones en `data/`) |
+| `/var/www/roundcube` | Webmail |
+
+### Puertos abiertos
+
+| Puerto | Servicio |
+|---|---|
+| 22 (o el tuyo) | SSH y SFTP |
+| 80, 443 (TCP y UDP) | Web, HTTP/3 y validación de Let's Encrypt |
+| 2087 | Panel de control |
+| 53 (TCP y UDP) | DNS |
+| 25, 465, 587 | Envío y recepción de correo |
+| 993 | IMAP |
+| 4190 | ManageSieve (filtros de correo) |
+| 3306 | MariaDB, cerrado salvo para las IPs que autorices en el acceso remoto de una base de datos |
+
+Los servicios internos (API del panel, API de PowerDNS, administración de Stalwart y de Caddy, Workers) solo escuchan
+en `127.0.0.1` o en sockets unix.
 
 ## Varios servidores y balanceo de carga
 
@@ -178,7 +304,8 @@ install.sh / uninstall.sh   Instalador y desinstalador
 node-install.sh             Prepara un VPS como nodo de despliegue
 scripts/hostpanel           CLI (se instala en /usr/local/bin)
 scripts/hp-update           Actualizador del panel y sus componentes
-templates/                  Configuración de PowerDNS, Stalwart, Roundcube y unidades systemd
+templates/                  Configuración inicial de Caddy, PowerDNS, Stalwart, Roundcube y unidades systemd
 panel/api                   Backend: Node 24 + Fastify 5 + Zod + SQLite (TypeScript nativo)
 panel/web                   Frontend: React 19 + Vite + Tailwind 4 + TanStack Query
+panel/runtime               Proceso aislado que ejecuta cada Worker
 ```
