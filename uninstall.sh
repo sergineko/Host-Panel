@@ -50,13 +50,13 @@ fi
 echo
 
 # --- services ------------------------------------------------------------------------
-for unit in /etc/systemd/system/hp-site-*.service; do
+for unit in /etc/systemd/system/hp-site-*.service /etc/systemd/system/hp-worker-*.service; do
   [[ -e $unit ]] || continue
   name=$(basename "$unit" .service)
   q systemctl disable --now "$name"
   rm -f "$unit"
 done
-ok "Procesos de los sitios detenidos"
+ok "Procesos de los sitios y Workers detenidos"
 
 for svc in hostpanel caddy stalwart; do
   q systemctl disable --now "$svc"
@@ -116,7 +116,7 @@ if [[ $PURGE == 1 ]]; then
       [[ -n $db ]] && q mariadb -e "DROP DATABASE IF EXISTS \`$db\`; DROP USER IF EXISTS '$user'@'localhost';"
     done < <(sqlite3 /var/lib/hostpanel/hostpanel.db 'SELECT name, username FROM databases' 2>/dev/null || true)
   fi
-  for user in $(getent passwd | cut -d: -f1 | grep -E '^hp-' || true); do q userdel "$user"; done
+  for user in $(getent passwd | cut -d: -f1 | grep -E '^(hp-|hpw-)' || true); do q userdel "$user"; done
   for user in caddy stalwart; do q userdel "$user"; done
   rm -rf /srv/hostpanel /var/lib/hostpanel /etc/hostpanel /var/log/hostpanel /var/lib/caddy /opt/stalwart /var/lib/roundcube /var/log/hostpanel-install.log
   ok "Datos borrados"

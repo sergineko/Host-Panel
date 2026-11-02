@@ -26,6 +26,7 @@ ENV_FILE=$ETC_DIR/hostpanel.env
 DATA_DIR=/var/lib/hostpanel
 SITES_DIR=/srv/hostpanel/sites
 STORAGE_DIR=/srv/hostpanel/storage
+WORKERS_DIR=/srv/hostpanel/workers
 LOG_DIR=/var/log/hostpanel
 INSTALL_LOG=/var/log/hostpanel-install.log
 
@@ -436,8 +437,10 @@ fi
 
 # =====================================================================================
 step "Panel de control"
-mkdir -p "$ETC_DIR" "$DATA_DIR" "$SITES_DIR" "$STORAGE_DIR"
+mkdir -p "$ETC_DIR" "$DATA_DIR" "$SITES_DIR" "$STORAGE_DIR" "$WORKERS_DIR"
 chmod 0700 "$ETC_DIR" "$DATA_DIR"; chmod 0755 /srv/hostpanel "$SITES_DIR"; chmod 0751 "$STORAGE_DIR"
+# Each Worker has its own 0750 folder; the parent only allows traversal.
+chmod 0711 "$WORKERS_DIR"
 setfacl -m u:caddy:x "$STORAGE_DIR"
 cat >"$ENV_FILE" <<EOF
 # HostPanel — generado por el instalador el $(date -u +%FT%TZ). Contiene secretos: no lo compartas.
@@ -459,6 +462,8 @@ HP_PHP_VERSION=$PHP_VERSION
 HP_DATA_DIR=$DATA_DIR
 HP_SITES_DIR=$SITES_DIR
 HP_STORAGE_DIR=$STORAGE_DIR
+HP_WORKERS_DIR=$WORKERS_DIR
+HP_WORKERS_DOMAIN=${DOMAIN:+workers.$DOMAIN}
 HP_LOG_DIR=$LOG_DIR
 HP_APP_DIR=$APP_DIR
 EOF

@@ -20,6 +20,7 @@ import {
   setRemoteHosts,
 } from '../services/databases.ts';
 import { createToken, deleteScopeTokens, deleteToken, listTokens, requireToken } from '../services/tokens.ts';
+import { boundBy } from './queues.ts';
 
 const RESERVED = new Set(['mysql', 'information_schema', 'performance_schema', 'sys', 'root', 'roundcube', 'hostpanel']);
 const identifier = (max: number) =>
@@ -115,6 +116,8 @@ export default async function databaseRoutes(app: FastifyInstance) {
   app.delete('/api/databases/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const row = getDb(id);
+    const workers = boundBy('d1', id);
+    if (workers.length) throw badRequest(`Antes quita el binding de los Workers: ${workers.map((w) => w.name).join(', ')}`);
     await dropDatabase(row.name, row.username, JSON.parse(row.remote_hosts) as string[]);
     run('DELETE FROM databases WHERE id = ?', id);
     deleteScopeTokens('database', id);

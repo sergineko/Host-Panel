@@ -11,6 +11,11 @@ User=caddy
 Group=caddy
 Environment=XDG_DATA_HOME=/var/lib/caddy
 Environment=XDG_CONFIG_HOME=/var/lib/caddy/config
+# Admin API on /run/caddy/admin.sock: with this umask only caddy (and root) can use it,
+# so sites and Workers on this server can't reconfigure the proxy.
+RuntimeDirectory=caddy
+RuntimeDirectoryMode=0700
+UMask=0077
 ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/bootstrap.json --resume
 TimeoutStopSec=5s
 LimitNOFILE=1048576

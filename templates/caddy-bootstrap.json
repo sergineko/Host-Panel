@@ -1,6 +1,5 @@
 {
   "admin": {
-    "listen": "127.0.0.1:2019",
-    "origins": ["127.0.0.1:2019", "localhost:2019"]
+    "listen": "unix//run/caddy/admin.sock"
   }
 }

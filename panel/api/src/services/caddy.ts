@@ -3,8 +3,10 @@
  * through Caddy's admin API. Caddy validates the config before applying it, so a bad
  * config never replaces a working one.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
+import { dirname, join } from 'node:path';
 import { config } from '../config.ts';
 import {
   all,
@@ -12,6 +14,7 @@ import {
   type BucketRow,
   type DomainRow,
   type ServerRow,
+  type WorkerRow,
   type IpRuleRow,
   type ProxyRouteRow,
   type RedirectRow,
@@ -23,6 +26,7 @@ import { nodePort, phpSocket, sitePaths } from './system.ts';
 import { HEALTH_PATH, LOCAL_SERVER_ID, NODE_PORT, nodeUpstream, siteIsLocalOnly, siteServerIds, type NodeInfo } from './servers.ts';
 import { bucketDir } from './storage.ts';
 import { WP_BLOCKED_PATHS } from './wordpress.ts';
+import { workerHostname, workerPort, workerRoutes } from './workers.ts';
 
 type Json = Record<string, unknown>;
 interface Route {
@@ -330,6 +334,25 @@ function siteRoutes(site: SiteRow, servers: ServerRow[]): Route[] {
   return siteContentRoutes(site);
 }
 
+/** Reverse proxy to a Worker process. Retries cover the instant it restarts on deploy. */
+function workerHandler(w: WorkerRow): Json {
+  return {
+    handler: 'reverse_proxy',
+    upstreams: [{ dial: `127.0.0.1:${workerPort(w.id)}` }],
+    load_balancing: { try_duration: '5s', try_interval: '100ms' },
+    headers: { request: { set: { 'X-Forwarded-Proto': ['{http.request.scheme}'] } } },
+  };
+}
+
+/** "ejemplo.com/api/*" → { host: 'ejemplo.com', path: '/api/*' } */
+function parseWorkerRoute(pattern: string) {
+  const clean = pattern.replace(/^https?:\/\//, '');
+  const slash = clean.indexOf('/');
+  const host = slash === -1 ? clean : clean.slice(0, slash);
+  const path = slash === -1 ? '/*' : clean.slice(slash);
+  return { host, path };
+}
+
 /** Public bucket served on its own hostname (like an R2 custom domain). */
 function bucketRoutes(b: BucketRow): Route[] {
   const cors = b.cors_origins.trim();
@@ -427,6 +450,7 @@ export function buildCaddyConfig(): Json {
   const ipRules = all<IpRuleRow>('SELECT * FROM ip_rules');
   const servers = all<ServerRow>("SELECT * FROM servers");
   const buckets = all<BucketRow>("SELECT * FROM buckets WHERE public = 1 AND hostname != ''");
+  const workers = all<WorkerRow>("SELECT * FROM workers WHERE enabled = 1 AND status = 'running'");
 
   const hosts = new Map<string, HostEntry>();
   const entry = (host: string) => {
@@ -440,6 +464,21 @@ export function buildCaddyConfig(): Json {
 
   // Redirects first, then proxy routes (longest prefix first), then the site itself.
   for (const r of redirects) entry(r.hostname).content.push(redirectRoute(r));
+  // Worker routes run before proxies and the site (like Cloudflare: the Worker sees the
+  // request first). More specific paths first.
+  const workerMatches = workers
+    .flatMap((w) => workerRoutes(w).map((r) => ({ w, ...parseWorkerRoute(r) })))
+    .sort((a, b) => b.path.replace(/\*$/, '').length - a.path.replace(/\*$/, '').length);
+  for (const m of workerMatches) {
+    const route: Route = { handle: [workerHandler(m.w)] };
+    if (m.path !== '/*') route.match = [{ path: [m.path] }];
+    entry(m.host).content.push(route);
+  }
+  // <name>.<workersDomain>, like *.workers.dev.
+  for (const w of workers) {
+    const host = workerHostname(w);
+    if (host && !hosts.has(host)) hosts.set(host, { content: [{ handle: [workerHandler(w)] }] });
+  }
   for (const p of [...proxies].sort((a, b) => b.path_prefix.length - a.path_prefix.length)) {
     const route: Route = { handle: proxyHandler(p) };
     if (p.path_prefix) route.match = [{ path: [p.path_prefix, `${p.path_prefix.replace(/\/$/, '')}/*`] }];
@@ -516,7 +555,9 @@ export function buildCaddyConfig(): Json {
   const originSites = sites.filter((st) => st.active_release && !siteIsLocalOnly(st) && siteServerIds(st).includes(LOCAL_SERVER_ID));
 
   return {
-    admin: { listen: config.caddyAdmin.replace(/^https?:\/\//, ''), origins: ['127.0.0.1:2019', 'localhost:2019'] },
+    admin: config.caddyAdmin.startsWith('unix/')
+      ? { listen: config.caddyAdmin }
+      : { listen: config.caddyAdmin.replace(/^https?:\/\//, ''), origins: ['127.0.0.1:2019', 'localhost:2019'] },
     logging: {
       logs: {
         default: { exclude: [`http.log.access.${ACCESS_LOGGER}`] },
@@ -592,17 +633,48 @@ export async function applyCaddyConfig(): Promise<void> {
     lastSync = Date.now();
     return;
   }
-  const res = await fetch(`${config.caddyAdmin}/load`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
-  if (!res.ok) {
-    lastError = await res.text();
+  const res = await postToCaddy('/load', body);
+  if (res.status !== 200) {
+    lastError = res.body;
     throw new Error(`Caddy rechazó la configuración: ${lastError}`);
   }
   lastError = '';
   lastSync = Date.now();
+}
+
+/**
+ * Talks to Caddy's admin API. The default is a unix socket only root can use; installs
+ * that still have the old TCP admin (127.0.0.1:2019) are reached there once, and the
+ * config we push moves the admin to the socket.
+ */
+function postToCaddy(path: string, body: string): Promise<{ status: number; body: string }> {
+  const viaSocket = config.caddyAdmin.startsWith('unix/');
+  const socketPath = viaSocket ? config.caddyAdmin.replace(/^unix\//, '') : '';
+  if (viaSocket && !existsSync(dirname(socketPath))) {
+    // Older caddy.service without RuntimeDirectory: create the folder for this boot.
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
+    spawnSync('chown', [`${config.caddyUser}:${config.caddyUser}`, dirname(socketPath)]);
+  }
+  const target =
+    viaSocket && existsSync(socketPath)
+      ? { socketPath, host: '127.0.0.1' }
+      : viaSocket
+        ? { host: '127.0.0.1', port: 2019 }
+        : { host: new URL(config.caddyAdmin).hostname, port: Number(new URL(config.caddyAdmin).port || 80) };
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      // Caddy only accepts Host 127.0.0.1 / ::1 / empty on its unix socket.
+      { ...target, path, method: 'POST', headers: { 'Content-Type': 'application/json', Host: '127.0.0.1', 'Content-Length': Buffer.byteLength(body) }, timeout: 30_000 },
+      (res) => {
+        let text = '';
+        res.on('data', (c) => (text += c));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text }));
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('Caddy no respondió')));
+    req.end(body);
+  });
 }
 
 /** Applies the config now and waits; concurrent callers are serialized. */

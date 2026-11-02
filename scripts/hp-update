@@ -76,6 +76,9 @@ update_panel() {
   (cd "$APP_DIR/panel/web" && { npm ci --no-audit --no-fund || { rm -rf node_modules && npm install --no-audit --no-fund; }; } && npm run build && rm -rf node_modules)
   install -m 0755 "$APP_DIR/scripts/hostpanel" /usr/local/bin/hostpanel
   cp "$APP_DIR/templates/systemd/hostpanel.service" /etc/systemd/system/hostpanel.service
+  # Caddy unit: admin API on a private unix socket (takes effect on the next Caddy restart).
+  cp "$APP_DIR/templates/systemd/caddy.service" /etc/systemd/system/caddy.service
+  cp "$APP_DIR/templates/caddy-bootstrap.json" /etc/caddy/bootstrap.json
   systemctl daemon-reload
   systemctl restart hostpanel
   for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health && break; sleep 1; done

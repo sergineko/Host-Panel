@@ -172,7 +172,7 @@ export function buildNodeCaddyConfig(server: ServerRow, sites: SiteRow[], conten
   }
   routes.push({ handle: [{ handler: 'static_response', status_code: 404, body: 'Sitio no desplegado en este nodo' }] });
   return {
-    admin: { listen: '127.0.0.1:2019' },
+    admin: { listen: 'unix//run/caddy/admin.sock' },
     apps: {
       http: {
         servers: {
@@ -198,7 +198,22 @@ export async function pushNodeCaddy(server: ServerRow, configJson: Json, log?: (
   const body = JSON.stringify(configJson);
   await remoteScript(
     server,
-    `echo ${sq(Buffer.from(body).toString('base64'))} | base64 -d | curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:2019/load`,
+    // Unix socket (root only); older nodes still listen on 127.0.0.1:2019 until this push.
+    `echo ${sq(Buffer.from(body).toString('base64'))} | base64 -d > /tmp/hp-caddy.json
+# Nodes installed before the admin socket: let systemd create /run/caddy from now on.
+if ! grep -q '^RuntimeDirectory=caddy' /etc/systemd/system/caddy.service; then
+  printf 'RuntimeDirectory=caddy\nRuntimeDirectoryMode=0700\nUMask=0077\n' > /tmp/hp-caddy-unit
+  sed -i '/^.Service.$/r /tmp/hp-caddy-unit' /etc/systemd/system/caddy.service
+  rm -f /tmp/hp-caddy-unit
+  systemctl daemon-reload
+fi
+if [ ! -d /run/caddy ]; then install -d -m 0700 -o caddy -g caddy /run/caddy; fi
+if [ -S /run/caddy/admin.sock ]; then
+  curl -fsS --unix-socket /run/caddy/admin.sock -X POST -H 'Content-Type: application/json' --data-binary @/tmp/hp-caddy.json http://127.0.0.1/load
+else
+  curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @/tmp/hp-caddy.json http://127.0.0.1:2019/load
+fi
+rm -f /tmp/hp-caddy.json`,
     { onLine: log },
   );
 }

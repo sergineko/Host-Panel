@@ -106,7 +106,18 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 | **Correo** | `webmail.<dominio>` y autoconfiguración por dominio, filtros, respuestas automáticas y reenvíos (ManageSieve) |
 | **Interfaz** | Buscador global (Ctrl+K), navegación agrupada, avisos de actualizaciones |
 
-### Fase 3 — Hoja de ruta (ideas siguientes)
+### Fase 3 — Workers y datos (estilo Cloudflare) · hecho
+| Módulo | Funcionalidad |
+|---|---|
+| **Workers** | Módulos JS con la API de Cloudflare (`fetch`, `queue`, `scheduled`, `env`, `ctx.waitUntil`); editor CodeMirror con pruebas HTTP y consola en vivo; rutas por dominio/ruta, subdominio `*.workers`, crons UTC, variables, secretos cifrados, métricas, versiones con vuelta atrás y despliegue que no tumba la versión anterior |
+| **Aislamiento** | Un proceso por Worker (`runtime/worker-host.mjs`), usuario `hpw-<id>`, permisos de Node (solo lectura de su carpeta, sin procesos hijo), systemd sin sockets unix y con límites de memoria/CPU; API interna de bindings en `127.0.0.1:3001` con token por Worker |
+| **Colas** | Lotes por tamaño o tiempo, `ack`/`retry`, reintentos con espera, cola de mensajes fallidos, pausa, productores (Worker o HTTP con token) y consumidores (Worker o *pull* por HTTP), estadísticas |
+| **KV** | Espacios clave-valor con TTL, metadatos, `list` con cursor y explorador en el panel |
+| **Caddy** | API de administración en un socket unix solo para root (los sitios y Workers ya no pueden reconfigurar el proxy) |
+
+### Fase 4 — Hoja de ruta (ideas siguientes)
+- **Durable Objects / WebSockets** en Workers y *service bindings* entre Workers.
+- **Workers en los VPS** (hoy se ejecutan en el servidor del panel) con despliegue en varios nodos.
 - **Copias de seguridad automáticas** de sitios, bases de datos y correo a un bucket propio o a S3 externo, con restauración en un clic.
 - **Compatibilidad S3** (firmas SigV4) en el almacenamiento para usar rclone, aws-cli y SDKs.
 - **Despliegues de vista previa** por rama o pull request con subdominio automático (`pr-12.misitio.com`).

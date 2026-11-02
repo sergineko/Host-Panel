@@ -7,6 +7,8 @@ import {
   Cpu,
   Database,
   Globe,
+  Inbox,
+  KeySquare,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -20,6 +22,7 @@ import {
   ShieldCheck,
   Sun,
   X,
+  Zap,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { CommandPalette, type PaletteItem } from './CommandPalette';
@@ -38,8 +41,11 @@ const nav: NavItem[] = [
   { to: '/sites', label: 'Sitios web', icon: <Rocket className="size-4" />, group: 'Hosting', keywords: 'despliegue github webhook' },
   { to: '/domains', label: 'Dominios y DNS', icon: <Globe className="size-4" />, group: 'Hosting', keywords: 'zona registros' },
   { to: '/mail', label: 'Correo', icon: <Mail className="size-4" />, group: 'Hosting', keywords: 'buzones webmail email' },
-  { to: '/databases', label: 'Bases de datos', icon: <Database className="size-4" />, group: 'Hosting', keywords: 'mariadb mysql sql d1' },
-  { to: '/storage', label: 'Almacenamiento', icon: <Package className="size-4" />, group: 'Hosting', keywords: 'r2 s3 buckets archivos cdn' },
+  { to: '/workers', label: 'Workers', icon: <Zap className="size-4" />, group: 'Workers y datos', keywords: 'funciones serverless edge javascript cron' },
+  { to: '/queues', label: 'Colas', icon: <Inbox className="size-4" />, group: 'Workers y datos', keywords: 'queues mensajes segundo plano' },
+  { to: '/kv', label: 'KV', icon: <KeySquare className="size-4" />, group: 'Workers y datos', keywords: 'clave valor cache sesiones' },
+  { to: '/databases', label: 'Bases de datos (D1)', icon: <Database className="size-4" />, group: 'Workers y datos', keywords: 'mariadb mysql sql d1' },
+  { to: '/storage', label: 'Almacenamiento (R2)', icon: <Package className="size-4" />, group: 'Workers y datos', keywords: 'r2 s3 buckets archivos cdn' },
   { to: '/servers', label: 'Servidores', icon: <Server className="size-4" />, group: 'Red y seguridad', keywords: 'vps balanceador nodos' },
   { to: '/proxy', label: 'Proxy inverso', icon: <ArrowLeftRight className="size-4" />, group: 'Red y seguridad', keywords: 'caddy rutas redirecciones' },
   { to: '/security', label: 'Seguridad / WAF', icon: <ShieldCheck className="size-4" />, group: 'Red y seguridad', keywords: 'firewall ip bloqueo ataque' },

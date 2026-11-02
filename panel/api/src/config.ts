@@ -32,6 +32,9 @@ export const config = {
   sitesDir: env('HP_SITES_DIR', '/srv/hostpanel/sites'),
   logDir: env('HP_LOG_DIR', '/var/log/hostpanel'),
   storageDir: env('HP_STORAGE_DIR', '/srv/hostpanel/storage'),
+  workersDir: env('HP_WORKERS_DIR', '/srv/hostpanel/workers'),
+  /** Internal API for Worker bindings (D1, R2, KV, Queues). Never exposed by Caddy. */
+  internalPort: Number(env('HP_INTERNAL_PORT', '3001')),
   appDir: env('HP_APP_DIR', fileURLToPath(new URL('../../..', import.meta.url))),
   /** Max size of one uploaded object (bytes). */
   maxObjectSize: Number(env('HP_MAX_OBJECT_MB', '5120')) * 1024 * 1024,
@@ -45,12 +48,16 @@ export const config = {
   serverIp: env('HP_SERVER_IP', '127.0.0.1'),
   serverIpv6: env('HP_SERVER_IPV6'),
   panelDomain: env('HP_PANEL_DOMAIN'),
+  baseDomain: env('HP_BASE_DOMAIN'),
+  /** Workers get <name>.<workersDomain> (like *.workers.dev). */
+  workersDomain: env('HP_WORKERS_DOMAIN', env('HP_BASE_DOMAIN') ? `workers.${env('HP_BASE_DOMAIN')}` : ''),
   panelPort: Number(env('HP_PANEL_PORT', '2087')),
   ns1: env('HP_NS1', 'ns1.example.com'),
   ns2: env('HP_NS2', 'ns2.example.com'),
   mailHostname: env('HP_MAIL_HOSTNAME'),
 
-  caddyAdmin: env('HP_CADDY_ADMIN', 'http://127.0.0.1:2019'),
+  /** Caddy admin API on a root-only unix socket (sites and Workers can't reach it). */
+  caddyAdmin: env('HP_CADDY_ADMIN', 'unix//run/caddy/admin.sock'),
   caddyUser: env('HP_CADDY_USER', 'caddy'),
   caddyDataDir: env('HP_CADDY_DATA', '/var/lib/caddy/caddy'),
 

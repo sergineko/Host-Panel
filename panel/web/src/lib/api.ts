@@ -286,3 +286,83 @@ export interface DatabaseInfo {
   api_url?: string;
   host?: string;
 }
+
+// --- Workers, Queues, KV ----------------------------------------------------------------
+
+export type BindingType = 'd1' | 'kv' | 'r2' | 'queue';
+
+export interface Worker {
+  id: number;
+  name: string;
+  version: number;
+  status: 'new' | 'running' | 'error' | 'stopped';
+  last_error: string;
+  enabled: boolean;
+  subdomain: boolean;
+  routes: string[];
+  crons: { cron: string; next: string[] }[];
+  vars: Record<string, string>;
+  secrets: string[];
+  bindings: { type: BindingType; name: string; id: number; resource: string }[];
+  memory_mb: number;
+  url: string | null;
+  port: number;
+  consumes: { id: number; name: string }[];
+  deployed_at: string | null;
+  created_at: string;
+  code?: string;
+  requests_24h?: number;
+  errors_24h?: number;
+}
+
+export interface WorkerEvent {
+  seq: number;
+  type: 'fetch' | 'queue' | 'scheduled' | 'log' | 'system';
+  ts: number;
+  method?: string;
+  url?: string;
+  status?: number;
+  duration?: number;
+  ip?: string;
+  queue?: string;
+  count?: number;
+  cron?: string;
+  logs?: { level: string; message: string }[];
+  exception?: string | null;
+}
+
+export interface DeployResult {
+  ok: boolean;
+  error?: string;
+  version?: number;
+  stage?: 'syntax' | 'start' | 'done';
+}
+
+export interface Queue {
+  id: number;
+  name: string;
+  consumer_worker_id: number | null;
+  max_batch_size: number;
+  max_batch_timeout: number;
+  max_retries: number;
+  retry_delay: number;
+  dead_letter_queue_id: number | null;
+  delivery_paused: boolean;
+  consumer: { id: number; name: string; status: string } | null;
+  dead_letter_queue: { id: number; name: string } | null;
+  producers: { id: number; name: string }[];
+  backlog: { total: number; ready: number; delayed: number; inflight: number; oldest: number | null };
+  totals_24h: { sent: number; acked: number; retried: number; dead: number };
+  api_url: string;
+  created_at: string;
+  stats?: { hour: number; sent: number; delivered: number; acked: number; retried: number; dead: number }[];
+}
+
+export interface KvNamespace {
+  id: number;
+  name: string;
+  keys: number;
+  size: number;
+  workers: { id: number; name: string }[];
+  created_at: string;
+}

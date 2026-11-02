@@ -22,6 +22,13 @@ import systemRoutes from './routes/system.ts';
 import serverRoutes from './routes/servers.ts';
 import storageRoutes from './routes/storage.ts';
 import adminRoutes from './routes/admin.ts';
+import workerRoutes from './routes/workers.ts';
+import queueRoutes from './routes/queues.ts';
+import kvRoutes from './routes/kv.ts';
+import { startInternalServer } from './internal.ts';
+import { startCronScheduler, startQueueDispatcher } from './services/queues.ts';
+import { startKvJanitor } from './services/kv.ts';
+import { startWorkersOnBoot } from './services/workers.ts';
 
 const app = Fastify({
   logger: { level: config.dev ? 'info' : 'warn' },
@@ -48,6 +55,9 @@ await app.register(databaseRoutes);
 await app.register(serverRoutes);
 await app.register(storageRoutes);
 await app.register(adminRoutes);
+await app.register(workerRoutes);
+await app.register(queueRoutes);
+await app.register(kvRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {
@@ -78,6 +88,11 @@ startAnalytics();
 startCertSync();
 
 await app.listen({ host: config.listenHost, port: config.listenPort });
+await startInternalServer();
+startQueueDispatcher();
+startCronScheduler();
+startKvJanitor();
+startWorkersOnBoot().catch((err) => console.error('Workers:', err.message));
 console.log(`HostPanel escuchando en http://${config.listenHost}:${config.listenPort}${config.dev ? ' (modo desarrollo)' : ''}`);
 
 // Push the full proxy configuration on start (Caddy may have restarted without it).

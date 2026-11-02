@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { CornerDownLeft, Database, Globe, Package, Rocket, Search } from 'lucide-react';
-import { api, type Bucket, type DatabaseInfo, type Domain, type Site } from '../lib/api';
+import { CornerDownLeft, Database, Globe, Inbox, Package, Rocket, Search, Zap } from 'lucide-react';
+import { api, type Bucket, type DatabaseInfo, type Domain, type Queue, type Site, type Worker } from '../lib/api';
 import { cx } from './ui';
 
 export interface PaletteItem {
@@ -27,16 +27,20 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
   const domains = useQuery({ queryKey: ['domains'], queryFn: () => api.get<Domain[]>('/api/domains'), enabled: open, staleTime: 30_000 });
   const buckets = useQuery({ queryKey: ['buckets'], queryFn: () => api.get<Bucket[]>('/api/buckets'), enabled: open, staleTime: 30_000 });
   const dbs = useQuery({ queryKey: ['databases'], queryFn: () => api.get<DatabaseInfo[]>('/api/databases'), enabled: open, staleTime: 30_000 });
+  const workers = useQuery({ queryKey: ['workers'], queryFn: () => api.get<Worker[]>('/api/workers'), enabled: open, staleTime: 30_000 });
+  const queues = useQuery({ queryKey: ['queues'], queryFn: () => api.get<Queue[]>('/api/queues'), enabled: open, staleTime: 30_000 });
 
   const items = useMemo<PaletteItem[]>(
     () => [
       ...pages,
+      ...(workers.data ?? []).map((w) => ({ id: `wk-${w.id}`, label: w.name, hint: w.url?.replace('https://', '') ?? 'Worker', icon: <Zap className="size-4" />, to: `/workers/${w.id}`, group: 'Workers' })),
+      ...(queues.data ?? []).map((q) => ({ id: `q-${q.id}`, label: q.name, hint: `${q.backlog.total} pendientes`, icon: <Inbox className="size-4" />, to: `/queues/${q.id}`, group: 'Colas' })),
       ...(sites.data ?? []).map((s) => ({ id: `site-${s.id}`, label: s.name, hint: s.hostnames[0], icon: <Rocket className="size-4" />, to: `/sites/${s.id}`, group: 'Sitios' })),
       ...(domains.data ?? []).map((d) => ({ id: `dom-${d.id}`, label: d.name, hint: 'DNS, correo y seguridad', icon: <Globe className="size-4" />, to: `/domains/${d.id}`, group: 'Dominios' })),
       ...(buckets.data ?? []).map((b) => ({ id: `bk-${b.id}`, label: b.name, hint: b.hostname || 'bucket', icon: <Package className="size-4" />, to: `/storage/${b.id}`, group: 'Almacenamiento' })),
       ...(dbs.data ?? []).map((d) => ({ id: `db-${d.id}`, label: d.name, hint: 'MariaDB', icon: <Database className="size-4" />, to: `/databases/${d.id}`, group: 'Bases de datos' })),
     ],
-    [pages, sites.data, domains.data, buckets.data, dbs.data],
+    [pages, sites.data, domains.data, buckets.data, dbs.data, workers.data, queues.data],
   );
 
   const filtered = useMemo(() => {

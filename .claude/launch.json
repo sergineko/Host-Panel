@@ -11,6 +11,9 @@
         "HP_LOG_DIR": ".dev-data",
         "HP_SITES_DIR": ".dev-data/sites",
         "HP_STORAGE_DIR": ".dev-data/storage",
+        "HP_WORKERS_DIR": ".dev-data/workers",
+        "HP_INTERNAL_PORT": "3101",
+        "HP_BASE_DOMAIN": "ejemplo.com",
         "HP_ENV_FILE": ".dev-data/none.env",
         "HP_MAIL_HOSTNAME": "mail.ejemplo.com",
         "HP_PANEL_DOMAIN": "panel.ejemplo.com",
@@ -18,7 +21,8 @@
         "HP_NS2": "ns2.ejemplo.com",
         "HP_SERVER_IP": "203.0.113.10"
       },
-      "port": 3000
+      "port": 3000,
+      "autoPort": false
     }
   ]
 }

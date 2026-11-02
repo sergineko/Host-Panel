@@ -10,6 +10,9 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Proxy inverso gráfico** (Caddy): rutas, balanceo, redirecciones y **SSL automático**
 - **WAF** OWASP CRS (Coraza), rate limit, reglas de IP, bloqueo de bots y **modo "bajo ataque"**
 - **Bases de datos** MariaDB con consola SQL y **API HTTP estilo D1**, copias y acceso remoto
+- **Workers** (API de Cloudflare Workers): editor en el navegador, rutas `dominio.com/api/*`, subdominio `nombre.workers.tu-dominio`, crons, logs en vivo, métricas y versiones
+- **Colas** estilo Cloudflare Queues: lotes, reintentos, cola de fallidos, productores por Worker o HTTP y consumidores Worker o *pull*
+- **KV**: almacén clave-valor con caducidad para los Workers
 - **Almacenamiento estilo R2**: buckets con dominio propio, CDN, CORS y API con tokens
 - **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
 - **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
@@ -76,6 +79,28 @@ También se actualiza desde el panel: **Sistema → Actualizaciones**.
    cada servidor; si eliges varios, el panel reparte el tráfico entre ellos y retira los que no responden.
 
 Para quitar el nodo de un VPS: `sudo bash node-install.sh --uninstall`.
+
+## Workers, colas y KV
+
+En **Workers y datos → Workers → Crear Worker** elige una plantilla (API con D1, contador KV, productor o consumidor de
+cola, cron, servidor de archivos R2…). El código usa la misma API que Cloudflare:
+
+```js
+export default {
+  async fetch(request, env, ctx) {
+    const { results } = await env.DB.prepare('SELECT * FROM productos WHERE precio < ?').bind(20).all();
+    await env.QUEUE.send({ visto: Date.now() });
+    return Response.json(results);
+  },
+  async queue(batch, env, ctx) { for (const m of batch.messages) m.ack(); },
+  async scheduled(event, env, ctx) { console.log('cron', event.cron); },
+};
+```
+
+- **Bindings** (Configuración del Worker): bases de datos (`env.DB`), KV (`env.KV`), buckets (`env.BUCKET`) y colas (`env.QUEUE`), más variables y secretos cifrados.
+- **Disparadores**: subdominio `nombre.workers.tu-dominio` (registro `*.workers` creado automáticamente si el dominio usa el DNS del panel), rutas en tus dominios (`ejemplo.com/api/*`, tienen prioridad sobre el sitio) y crons en UTC.
+- **Despliegue seguro**: se comprueba la sintaxis y, si la nueva versión no arranca, sigue funcionando la anterior. Historial de versiones con vuelta atrás.
+- **Aislamiento**: cada Worker es un proceso con su propio usuario, solo puede leer su carpeta (modelo de permisos de Node), no puede lanzar programas ni usar sockets locales, y tiene límites de memoria y CPU. Sus bindings pasan por una API interna que solo da acceso a los recursos asignados.
 
 ## Almacenamiento y bases de datos por API
 

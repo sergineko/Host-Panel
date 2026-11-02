@@ -27,6 +27,12 @@ const Servers = lazy(() => import('./pages/Servers'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const SystemPage = lazy(() => import('./pages/System'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
+const Workers = lazy(() => import('./pages/Workers'));
+const WorkerDetail = lazy(() => import('./pages/WorkerDetail'));
+const Queues = lazy(() => import('./pages/Queues'));
+const QueueDetail = lazy(() => import('./pages/QueueDetail'));
+const KvList = lazy(() => import('./pages/Kv').then((m) => ({ default: m.KvList })));
+const KvDetail = lazy(() => import('./pages/Kv').then((m) => ({ default: m.KvDetail })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -82,6 +88,12 @@ createRoot(document.getElementById('root')!).render(
             <Route path="storage" element={<Storage />} />
             <Route path="storage/:id" element={<BucketDetail />} />
             <Route path="servers" element={<Servers />} />
+            <Route path="workers" element={<Workers />} />
+            <Route path="workers/:id" element={<WorkerDetail />} />
+            <Route path="queues" element={<Queues />} />
+            <Route path="queues/:id" element={<QueueDetail />} />
+            <Route path="kv" element={<KvList />} />
+            <Route path="kv/:id" element={<KvDetail />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="system" element={<SystemPage />} />
             <Route path="settings" element={<SettingsPage />} />

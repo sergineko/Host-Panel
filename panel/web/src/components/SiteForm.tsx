@@ -154,8 +154,8 @@ function EnvEditor({ value, onChange }: { value: Record<string, string>; onChang
     <div className="space-y-2">
       {rows.map((r, i) => (
         <div key={i} className="flex gap-2">
-          <Input className="w-2/5 font-mono text-[13px]" placeholder="NOMBRE" value={r.k} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, k: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') } : x)))} />
-          <Input className="flex-1 font-mono text-[13px]" placeholder="valor" value={r.v} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)))} />
+          <Input className="!w-2/5 font-mono text-[13px]" placeholder="NOMBRE" value={r.k} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, k: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') } : x)))} />
+          <Input className="min-w-0 !flex-1 font-mono text-[13px]" placeholder="valor" value={r.v} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)))} />
           <Button type="button" variant="ghost" aria-label="Quitar variable" onClick={() => commit(rows.filter((_, j) => j !== i))}>
             <Trash2 className="size-4" />
           </Button>

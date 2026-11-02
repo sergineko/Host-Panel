@@ -17,6 +17,7 @@ import {
   removeBucketDir,
 } from '../services/storage.ts';
 import { createToken, deleteScopeTokens, deleteToken, listTokens, requireToken } from '../services/tokens.ts';
+import { boundBy } from './queues.ts';
 
 const bucketInput = z.object({
   public: z.boolean().default(false),
@@ -137,6 +138,8 @@ export default async function storageRoutes(app: FastifyInstance) {
   app.delete('/api/buckets/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const b = getBucket(id);
+    const workers = boundBy('r2', id);
+    if (workers.length) throw badRequest(`Antes quita el binding de los Workers: ${workers.map((w) => w.name).join(', ')}`);
     run('DELETE FROM buckets WHERE id = ?', id);
     deleteScopeTokens('bucket', id);
     await removeBucketDir(b.name);

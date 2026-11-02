@@ -198,6 +198,109 @@ const migrations: string[] = [
   ALTER TABLE sites ADD COLUMN source TEXT NOT NULL DEFAULT 'git';
   ALTER TABLE sites ADD COLUMN app TEXT NOT NULL DEFAULT '{}';
   `,
+  `
+  CREATE TABLE workers (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    code TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 0,
+    routes TEXT NOT NULL DEFAULT '[]',
+    subdomain INTEGER NOT NULL DEFAULT 1,
+    crons TEXT NOT NULL DEFAULT '[]',
+    vars TEXT NOT NULL DEFAULT '{}',
+    secrets TEXT NOT NULL DEFAULT '{}',
+    bindings TEXT NOT NULL DEFAULT '[]',
+    memory_mb INTEGER NOT NULL DEFAULT 128,
+    token TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'new',
+    last_error TEXT NOT NULL DEFAULT '',
+    deployed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE worker_versions (
+    id INTEGER PRIMARY KEY,
+    worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX worker_versions_worker ON worker_versions(worker_id, version DESC);
+  CREATE TABLE worker_metrics (
+    worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+    hour INTEGER NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    errors INTEGER NOT NULL DEFAULT 0,
+    duration_ms REAL NOT NULL DEFAULT 0,
+    queue_messages INTEGER NOT NULL DEFAULT 0,
+    cron_runs INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (worker_id, hour)
+  );
+  CREATE TABLE kv_namespaces (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE kv_entries (
+    namespace_id INTEGER NOT NULL REFERENCES kv_namespaces(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value BLOB NOT NULL,
+    metadata TEXT,
+    expires_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (namespace_id, key)
+  );
+  CREATE TABLE queues (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    consumer_worker_id INTEGER REFERENCES workers(id) ON DELETE SET NULL,
+    max_batch_size INTEGER NOT NULL DEFAULT 10,
+    max_batch_timeout INTEGER NOT NULL DEFAULT 5,
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    retry_delay INTEGER NOT NULL DEFAULT 0,
+    dead_letter_queue_id INTEGER REFERENCES queues(id) ON DELETE SET NULL,
+    delivery_paused INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE queue_messages (
+    id INTEGER PRIMARY KEY,
+    queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'json',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    visible_at INTEGER NOT NULL,
+    lease_id TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX queue_messages_ready ON queue_messages(queue_id, visible_at, id);
+  CREATE TABLE queue_stats (
+    queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+    hour INTEGER NOT NULL,
+    sent INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    acked INTEGER NOT NULL DEFAULT 0,
+    retried INTEGER NOT NULL DEFAULT 0,
+    dead INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (queue_id, hour)
+  );
+  -- API tokens can now also be scoped to a queue (CHECK constraints can't be altered).
+  CREATE TABLE api_tokens_new (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    prefix TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('bucket','database','queue')),
+    scope_id INTEGER NOT NULL,
+    can_write INTEGER NOT NULL DEFAULT 0,
+    last_used TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT INTO api_tokens_new SELECT * FROM api_tokens;
+  DROP TABLE api_tokens;
+  ALTER TABLE api_tokens_new RENAME TO api_tokens;
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -379,9 +482,50 @@ export interface ApiTokenRow {
   name: string;
   token_hash: string;
   prefix: string;
-  scope_type: 'bucket' | 'database';
+  scope_type: 'bucket' | 'database' | 'queue';
   scope_id: number;
   can_write: number;
   last_used: string | null;
   created_at: string;
+}
+export interface WorkerRow {
+  id: number;
+  name: string;
+  code: string;
+  version: number;
+  routes: string;
+  subdomain: number;
+  crons: string;
+  vars: string;
+  secrets: string;
+  bindings: string;
+  memory_mb: number;
+  token: string;
+  enabled: number;
+  status: 'new' | 'running' | 'error' | 'stopped';
+  last_error: string;
+  deployed_at: string | null;
+  created_at: string;
+}
+export interface QueueRow {
+  id: number;
+  name: string;
+  consumer_worker_id: number | null;
+  max_batch_size: number;
+  max_batch_timeout: number;
+  max_retries: number;
+  retry_delay: number;
+  dead_letter_queue_id: number | null;
+  delivery_paused: number;
+  created_at: string;
+}
+export interface QueueMessageRow {
+  id: number;
+  queue_id: number;
+  body: string;
+  content_type: string;
+  attempts: number;
+  visible_at: number;
+  lease_id: string | null;
+  created_at: number;
 }
