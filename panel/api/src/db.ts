@@ -389,6 +389,29 @@ const migrations: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  `
+  -- SFTP-only logins locked (chroot) to one site's folder, like cPanel's FTP accounts.
+  CREATE TABLE sftp_accounts (
+    id INTEGER PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    username TEXT NOT NULL UNIQUE,
+    public_keys TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    password_changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX sftp_accounts_site ON sftp_accounts(site_id);
+  -- Password-protected paths (cPanel's Directory Privacy). The hash is bcrypt, as Caddy expects.
+  CREATE TABLE protected_paths (
+    id INTEGER PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (site_id, path, username)
+  );
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -497,6 +520,23 @@ export interface SiteCronRow {
   last_status: '' | 'success' | 'failed' | 'running';
   last_duration: number;
   last_output: string;
+  created_at: string;
+}
+export interface SftpAccountRow {
+  id: number;
+  site_id: number;
+  username: string;
+  public_keys: string;
+  note: string;
+  password_changed_at: string;
+  created_at: string;
+}
+export interface ProtectedPathRow {
+  id: number;
+  site_id: number;
+  path: string;
+  username: string;
+  password_hash: string;
   created_at: string;
 }
 export interface DeploymentRow {

@@ -9,6 +9,7 @@ import { deploymentLog, enqueueDeploy, releasesOnDisk, removeSiteFromNode } from
 import { installedPhpVersions, sitePhpVersion } from '../services/php.ts';
 import { describeSpec, NODE_SPEC_RE, resolveNode } from '../services/nodejs.ts';
 import { LOCAL_SERVER_ID, remoteScript, siteServerIds } from '../services/servers.ts';
+import { removeSftpUser } from '../services/sftp.ts';
 import { nodePort, nodeUnit, removePhpPool, removeSiteSystem, stopUnit, unitLogs, writeSiteEnv } from '../services/system.ts';
 import { createDatabase, dropDatabase } from '../services/databases.ts';
 import { deleteScopeTokens } from '../services/tokens.ts';
@@ -329,8 +330,11 @@ export default async function siteRoutes(app: FastifyInstance) {
   app.delete('/api/sites/:id', async (req) => {
     const { id } = parse(idParam, req.params);
     const site = getSite(id);
+    // SFTP logins share the site's UID, so remove them before the site's Linux user.
+    const sftpUsers = all<{ username: string }>('SELECT username FROM sftp_accounts WHERE site_id = ?', id).map((a) => a.username);
     run('DELETE FROM sites WHERE id = ?', id);
     await syncCaddy();
+    for (const u of sftpUsers) await removeSftpUser(u).catch((err) => req.log.warn(err));
     for (const sid of siteServerIds(site).filter((x) => x !== LOCAL_SERVER_ID)) {
       const server = get<ServerRow>('SELECT * FROM servers WHERE id = ?', sid);
       if (server) await removeSiteFromNode(server, id).catch((err) => req.log.warn(err));

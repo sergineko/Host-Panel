@@ -15,7 +15,7 @@ import { join, relative } from 'node:path';
 import { config } from '../config.ts';
 import { all, get, run, type DeploymentRow, type ServerRow, type SiteRow } from '../db.ts';
 import { exec } from '../lib/exec.ts';
-import { siteContentRoutes, syncCaddy } from './caddy.ts';
+import { nodeSiteRoutes, syncCaddy } from './caddy.ts';
 import { phpPoolDir, PHP_EXTENSIONS } from './php.ts';
 import { ensureNodeOnRemoteScript, nodePathEnv, remoteNodeBin, siteNode, type NodeInstall } from './nodejs.ts';
 import { installWordPress, isWordPressInstalled, wpDir } from './wordpress.ts';
@@ -185,7 +185,7 @@ const stopNodeAppOnNode = (server: ServerRow, site: SiteRow, slot: number) =>
 /** Pushes the Caddy config of a node with every site it currently serves. */
 export async function syncNodeCaddy(server: ServerRow, log?: (l: string) => void) {
   const sites = all<SiteRow>("SELECT * FROM sites WHERE active_release != ''").filter((s) => siteServerIds(s).includes(server.id));
-  await pushNodeCaddy(server, buildNodeCaddyConfig(server, sites, siteContentRoutes), log);
+  await pushNodeCaddy(server, buildNodeCaddyConfig(server, sites, nodeSiteRoutes), log);
 }
 
 /** Removes everything a site left on a node (site moved away or deleted). */

@@ -7,6 +7,8 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Administrador de archivos** por sitio: subir arrastrando, editor con resaltado (HTML, CSS, JS, PHP, JSON), renombrar, mover, descomprimir .zip/.tar.gz y descargar
 - **Copias de seguridad** por sitio (archivos + bases de datos), manuales o diarias/semanales con retención, descarga y restauración con copia previa automática
 - **Tareas cron** por sitio con atajos de frecuencia, ejecución manual y salida de la última ejecución
+- **Cuentas SFTP** por sitio: accesos solo-SFTP encerrados (chroot) en la carpeta del sitio, sin consola ni acceso a otros sitios; contraseña que se muestra una sola vez y claves SSH opcionales
+- **Rutas protegidas con contraseña** (privacidad de directorios): `/` o `/admin` piden usuario y contraseña desde Caddy (bcrypt); la ruta más específica manda, como con `.htaccess`
 - **Ajustes de PHP por sitio** (memoria, subida, tiempo, variables, zona horaria, mostrar errores) y registro de errores PHP en el panel
 - Sitios **estáticos, PHP y Node.js** con despliegue automático desde **GitHub** (webhook firmado, rollback, sin caídas)
 - **Multidominio** con **DNS** propio (PowerDNS) y editor de registros

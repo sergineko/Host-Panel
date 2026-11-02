@@ -28,7 +28,7 @@ export function sitePaths(id: number) {
 }
 
 /** Writes a file outside the panel data dir (system config). In dev mode, only logs. */
-async function writeSystemFile(path: string, content: string, mode = 0o644) {
+export async function writeSystemFile(path: string, content: string, mode = 0o644) {
   if (config.dev) {
     console.log(`[dev] write ${path}\n${content}`);
     return;
@@ -38,7 +38,7 @@ async function writeSystemFile(path: string, content: string, mode = 0o644) {
   await rename(tmp, path);
 }
 
-async function removeSystemFile(path: string) {
+export async function removeSystemFile(path: string) {
   if (config.dev) return;
   await rm(path, { force: true });
 }
@@ -60,10 +60,20 @@ export async function prepareSiteDirs(id: number) {
   }
   const user = siteUser(id);
   await exec('chown', ['-R', `${user}:${user}`, p.root]);
-  await exec('chmod', ['0750', p.root]);
+  await lockSiteRoot(id);
   // Caddy (web server) needs read access to serve static files; nobody else does.
   await exec('setfacl', ['-R', '-m', `u:${config.caddyUser}:rX`, p.root]);
   await exec('setfacl', ['-R', '-d', '-m', `u:${config.caddyUser}:rX`, p.root]);
+}
+
+/**
+ * The site's top folder belongs to root (group = site user, 0750). OpenSSH requires that
+ * for the SFTP chroot; the site user still reads it through the group and owns everything inside.
+ */
+export async function lockSiteRoot(id: number) {
+  const root = sitePaths(id).root;
+  await exec('chown', [`root:${siteUser(id)}`, root]);
+  await exec('chmod', ['0750', root]);
 }
 
 export async function chownSite(id: number, path: string) {

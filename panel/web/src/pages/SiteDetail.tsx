@@ -7,6 +7,7 @@ import { api, type Deployment, type Site } from '../lib/api';
 import { CertificateList } from '../components/Certificates';
 import { FileManager } from '../components/FileManager';
 import { BackupsTab, CronsTab, PhpSettingsCard } from '../components/SiteTools';
+import { ProtectedPathsCard, SftpCard } from '../components/SiteAccess';
 import { parseDate, timeAgo } from '../lib/format';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Modal, PageHeader, Spinner, StatusBadge, StickyActions, Tabs, cx } from '../components/ui';
 import type { WordPressCredentials } from './SiteNew';
@@ -265,7 +266,7 @@ export default function SiteDetail() {
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const [creds, setCreds] = useState<WordPressCredentials | null>((location.state as { credentials?: WordPressCredentials } | null)?.credentials ?? null);
-  const tab = (params.get('tab') ?? 'deployments') as 'deployments' | 'files' | 'ssl' | 'backups' | 'cron' | 'webhook' | 'settings' | 'logs';
+  const tab = (params.get('tab') ?? 'deployments') as 'deployments' | 'files' | 'access' | 'ssl' | 'backups' | 'cron' | 'webhook' | 'settings' | 'logs';
   const resetWp = useMutation({
     mutationFn: () => api.post<{ user: string; password: string }>(`/api/sites/${id}/wordpress/password`),
     onSuccess: (r) => setCreds({ admin_url: q.data?.wordpress?.admin_url ?? '', user: r.user, password: r.password }),
@@ -355,6 +356,7 @@ export default function SiteDetail() {
         tabs={[
           { id: 'deployments', label: isWp ? 'Actividad' : 'Despliegues' },
           { id: 'files', label: 'Archivos' },
+          { id: 'access', label: 'SFTP y privacidad' },
           { id: 'ssl', label: 'Dominios y SSL' },
           { id: 'backups', label: 'Copias' },
           { id: 'cron', label: 'Cron' },
@@ -366,6 +368,12 @@ export default function SiteDetail() {
       {isWp && <WordPressOverview site={site} />}
       {tab === 'deployments' && <DeploymentsTab site={site} />}
       {tab === 'files' && <FileManager siteId={site.id} />}
+      {tab === 'access' && (
+        <div className="space-y-4">
+          <SftpCard site={site} />
+          <ProtectedPathsCard site={site} />
+        </div>
+      )}
       {tab === 'ssl' && <CertificateList hosts={site.hostnames} title="Certificados de este sitio" />}
       {tab === 'backups' && <BackupsTab site={site} />}
       {tab === 'cron' && <CronsTab site={site} />}

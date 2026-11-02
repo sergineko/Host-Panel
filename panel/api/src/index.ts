@@ -30,6 +30,7 @@ import loadBalancerRoutes from './routes/loadbalancers.ts';
 import nodeRoutes from './routes/nodejs.ts';
 import certificateRoutes from './routes/certificates.ts';
 import siteToolRoutes from './routes/sitetools.ts';
+import siteAccessRoutes from './routes/siteaccess.ts';
 import { startBackupScheduler } from './services/backups.ts';
 import { startSiteCronScheduler } from './services/sitecrons.ts';
 import { startInternalServer } from './internal.ts';
@@ -70,6 +71,7 @@ await app.register(loadBalancerRoutes);
 await app.register(nodeRoutes);
 await app.register(certificateRoutes);
 await app.register(siteToolRoutes);
+await app.register(siteAccessRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {

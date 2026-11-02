@@ -17,12 +17,14 @@ import {
   type WorkerRow,
   type IpRuleRow,
   type LoadBalancerRow,
+  type ProtectedPathRow,
   type ProxyRouteRow,
   type RedirectRow,
   type SecurityRow,
   type SiteRow,
 } from '../db.ts';
 import { matchDomain } from '../lib/validate.ts';
+import { protectedPathRoutes } from './protectedpaths.ts';
 import { nodePort, phpSocket, sitePaths } from './system.ts';
 import { HEALTH_PATH, LOCAL_SERVER_ID, NODE_PORT, nodeUpstream, siteIsLocalOnly, siteServerIds, type NodeInfo } from './servers.ts';
 import { bucketDir } from './storage.ts';
@@ -271,6 +273,15 @@ export function siteContentRoutes(site: SiteRow): Route[] {
     return routes;
   }
   return staticSiteRoutes(current, !!site.spa);
+}
+
+/**
+ * Content routes for a remote node's Caddy: the same protected paths are checked there too,
+ * so reaching the node directly (port 8443) does not skip them.
+ */
+export function nodeSiteRoutes(site: SiteRow): Route[] {
+  const rows = all<ProtectedPathRow>('SELECT * FROM protected_paths WHERE site_id = ? ORDER BY id', site.id);
+  return [...protectedPathRoutes(rows), ...siteContentRoutes(site)];
 }
 
 /** PEM certificates → base64 DER, as Caddy's inline CA pool expects. */
@@ -528,6 +539,7 @@ export function buildCaddyConfig(): Json {
   const servers = all<ServerRow>("SELECT * FROM servers");
   const buckets = all<BucketRow>("SELECT * FROM buckets WHERE public = 1 AND hostname != ''");
   const workers = all<WorkerRow>("SELECT * FROM workers WHERE enabled = 1 AND status = 'running'");
+  const protectedPaths = all<ProtectedPathRow>('SELECT * FROM protected_paths ORDER BY id');
 
   const hosts = new Map<string, HostEntry>();
   const entry = (host: string) => {
@@ -575,6 +587,15 @@ export function buildCaddyConfig(): Json {
   }
 
   for (const b of buckets) entry(b.hostname).content.push(...bucketRoutes(b));
+
+  // Password-protected paths go first on the site's hostnames, so redirects, Workers and
+  // proxies on the same host can't be used to get around them.
+  for (const site of sites) {
+    const rows = protectedPaths.filter((p) => p.site_id === site.id);
+    if (!rows.length) continue;
+    const auth = protectedPathRoutes(rows);
+    for (const host of JSON.parse(site.hostnames) as string[]) entry(host).content.unshift(...auth);
+  }
 
   // Panel on its own domain.
   const panelUpstream = { handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${config.listenPort}` }] };
