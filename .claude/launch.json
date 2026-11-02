@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hostpanel-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--disable-warning=ExperimentalWarning", "panel/api/src/index.ts"],
+      "env": {
+        "HP_DEV": "1",
+        "HP_DATA_DIR": ".dev-data",
+        "HP_LOG_DIR": ".dev-data",
+        "HP_SITES_DIR": ".dev-data/sites",
+        "HP_ENV_FILE": ".dev-data/none.env",
+        "HP_MAIL_HOSTNAME": "mail.ejemplo.com",
+        "HP_PANEL_DOMAIN": "panel.ejemplo.com",
+        "HP_NS1": "ns1.ejemplo.com",
+        "HP_NS2": "ns2.ejemplo.com",
+        "HP_SERVER_IP": "203.0.113.10"
+      },
+      "port": 3000
+    }
+  ]
+}

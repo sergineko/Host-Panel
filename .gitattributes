@@ -1,0 +1,4 @@
+# Shell scripts and configs run on Linux: always LF line endings.
+* text=auto eol=lf
+*.png binary
+*.ico binary

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# HostPanel — herramienta de administración desde la terminal.
+set -uo pipefail
+
+APP_DIR=/opt/hostpanel
+API_DIR=$APP_DIR/panel/api
+ENV_FILE=/etc/hostpanel/hostpanel.env
+
+if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; D=$'\e[2m'; N=$'\e[0m'; else B='' G='' R='' D='' N=''; fi
+
+need_root() { if [[ $EUID -ne 0 ]]; then echo "Este comando necesita root: sudo hostpanel $*" >&2; exit 1; fi; }
+php_service() { local v; v=$(grep -E '^HP_PHP_VERSION=' "$ENV_FILE" 2>/dev/null | cut -d= -f2); echo "php${v:-8.3}-fpm"; }
+services() { echo hostpanel caddy pdns stalwart mariadb "$(php_service)"; }
+cli() { (cd "$API_DIR" && node --disable-warning=ExperimentalWarning src/cli.ts "$@"); }
+
+usage() {
+  cat <<EOF
+${B}Uso:${N} hostpanel <comando>
+
+  status                  Estado de todos los servicios
+  restart [servicio]      Reinicia el panel (o el servicio indicado, o 'all')
+  logs [servicio]         Sigue los logs (hostpanel, caddy, pdns, stalwart…)
+  reset-password [usuario] [contraseña]
+                          Restablece la contraseña del panel (genera una si no se indica)
+  sync-proxy              Regenera y aplica la configuración de Caddy
+  update                  Actualiza HostPanel a la última versión (conserva los datos)
+  uninstall [--purge]     Desinstala (con --purge borra también todos los datos)
+  info                    Muestra URLs y configuración principal
+EOF
+}
+
+cmd=${1:-help}
+shift || true
+
+case $cmd in
+  status)
+    printf '%-20s %s\n' "SERVICIO" "ESTADO"
+    for s in $(services); do
+      state=$(systemctl is-active "$s" 2>/dev/null)
+      if [[ $state == active ]]; then color=$G; else color=$R; fi
+      printf '%-20s %s%s%s\n' "$s" "$color" "${state:-desconocido}" "$N"
+    done
+    sites=$(systemctl list-units 'hp-site-*' --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+    if [[ -n $sites ]]; then printf '\n%sApps Node:%s %s\n' "$D" "$N" "$sites"; fi
+    ;;
+  restart)
+    need_root restart
+    target=${1:-hostpanel}
+    if [[ $target == all ]]; then
+      for s in $(services); do systemctl restart "$s" && echo "✔ $s"; done
+    else
+      systemctl restart "$target" && echo "✔ $target reiniciado"
+    fi
+    ;;
+  logs)
+    journalctl -u "${1:-hostpanel}" -f -n 100 --no-pager
+    ;;
+  reset-password)
+    need_root reset-password
+    cli reset-password "${1:-admin}" "${2:-}"
+    ;;
+  sync-proxy)
+    need_root sync-proxy
+    cli sync-proxy
+    ;;
+  update)
+    need_root update
+    if [[ ! -d $APP_DIR/.git ]]; then
+      echo "Esta instalación no se hizo desde git. Vuelve a ejecutar install.sh desde la nueva versión." >&2
+      exit 1
+    fi
+    git -C "$APP_DIR" fetch --depth 1 origin && git -C "$APP_DIR" reset --hard FETCH_HEAD && bash "$APP_DIR/install.sh" --update
+    ;;
+  uninstall)
+    need_root uninstall
+    tmp=$(mktemp)
+    cp "$APP_DIR/uninstall.sh" "$tmp"   # the uninstaller deletes $APP_DIR, so run a copy
+    bash "$tmp" "$@"
+    status=$?
+    rm -f "$tmp"
+    exit $status
+    ;;
+  info)
+    need_root info
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    echo "Panel:       https://${HP_SERVER_IP}:${HP_PANEL_PORT}${HP_PANEL_DOMAIN:+  ·  https://$HP_PANEL_DOMAIN}"
+    echo "Webmail:     ${HP_MAIL_HOSTNAME:+https://$HP_MAIL_HOSTNAME}"
+    echo "Nameservers: $HP_NS1, $HP_NS2"
+    echo "IP:          $HP_SERVER_IP ${HP_SERVER_IPV6}"
+    echo "Versión:     $(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo local)"
+    ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 1 ;;
+esac
