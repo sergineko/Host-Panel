@@ -215,3 +215,20 @@ export function defaultZoneRecords(zone: string) {
   }
   return recs;
 }
+
+/** Points a zone at new nameservers: NS records and the primary server in its SOA. */
+export async function setZoneNameservers(zone: string, nameservers: string[]) {
+  const apex = fqdn(zone);
+  const rrsets = await getRRSets(zone);
+  const soa = rrsets.find((r) => r.name === apex && r.type === 'SOA');
+  const changes: (RRSet & { changetype: 'REPLACE' | 'DELETE' })[] = [
+    { name: apex, type: 'NS', ttl: 3600, records: nameservers.map((n) => ({ content: fqdn(n), disabled: false })), changetype: 'REPLACE' },
+  ];
+  if (soa?.records[0]) {
+    const parts = soa.records[0].content.split(/\s+/);
+    parts[0] = fqdn(nameservers[0]!);
+    if (parts[2] && /^\d+$/.test(parts[2])) parts[2] = String(Number(parts[2]) + 1);
+    changes.push({ name: apex, type: 'SOA', ttl: soa.ttl, records: [{ content: parts.join(' '), disabled: false }], changetype: 'REPLACE' });
+  }
+  await patchRRSets(zone, changes);
+}

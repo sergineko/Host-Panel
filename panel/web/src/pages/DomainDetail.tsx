@@ -6,6 +6,7 @@ import { Mail, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type DnsRecord, type Domain } from '../lib/api';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, Table, Tabs, Td } from '../components/ui';
 import { SecurityPanel } from '../components/SecurityPanel';
+import { DomainConnection } from '../components/Connection';
 
 interface DomainDetailData extends Omit<Domain, 'sites'> {
   nameservers: string[];
@@ -116,14 +117,6 @@ function DnsTab({ domain }: { domain: DomainDetailData }) {
 
   return (
     <div className="space-y-4">
-      <Card title="Nameservers">
-        <p className="mb-3 text-[13px] text-muted">En tu registrador de dominios, cambia los nameservers de {domain.name} por estos:</p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {domain.nameservers.map((ns) => (
-            <Copyable key={ns} value={ns} />
-          ))}
-        </div>
-      </Card>
       <Card
         title="Registros DNS"
         padded={false}
@@ -307,7 +300,7 @@ export default function DomainDetail() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') ?? 'dns') as 'dns' | 'security' | 'mail' | 'sites';
+  const tab = (params.get('tab') ?? 'connect') as 'connect' | 'dns' | 'security' | 'mail' | 'sites';
   const q = useQuery({ queryKey: ['domain', id], queryFn: () => api.get<DomainDetailData>(`/api/domains/${id}`) });
 
   if (q.isLoading) return <Spinner />;
@@ -339,12 +332,14 @@ export default function DomainDetail() {
         value={tab}
         onChange={(t) => setParams({ tab: t })}
         tabs={[
-          { id: 'dns', label: 'DNS' },
+          { id: 'connect', label: 'Conexión' },
+          { id: 'dns', label: 'Registros DNS' },
           { id: 'security', label: 'Seguridad' },
           { id: 'mail', label: 'Correo' },
           { id: 'sites', label: `Sitios (${d.sites.length})` },
         ]}
       />
+      {tab === 'connect' && <DomainConnection domainId={id} />}
       {tab === 'dns' && <DnsTab domain={d} />}
       {tab === 'security' && <SecurityPanel domainId={id} />}
       {tab === 'mail' && <MailTab domain={d} />}

@@ -7,6 +7,7 @@ import { badRequest, domainName, HttpError, idParam, notFound, parse } from '../
 import { DEFAULT_SECURITY, syncCaddy } from '../services/caddy.ts';
 import * as dns from '../services/dns.ts';
 import * as mail from '../services/mail.ts';
+import { enableMailForDomain, mailAvailable, publishMailRecords } from '../services/maildns.ts';
 
 function getDomain(id: number) {
   const d = get<DomainRow>('SELECT * FROM domains WHERE id = ?', id);
@@ -18,39 +19,6 @@ function getSecurity(domainId: number): SecurityRow {
   return get<SecurityRow>('SELECT * FROM security WHERE domain_id = ?', domainId) ?? { domain_id: domainId, ...DEFAULT_SECURITY };
 }
 
-/** Publishes the mail DNS records Stalwart recommends into the domain's zone. */
-async function publishMailRecords(domain: string) {
-  const records = await mail.mailDnsRecords(domain);
-  const grouped = new Map<string, { name: string; type: string; contents: string[] }>();
-  for (const r of records) {
-    if (!['MX', 'TXT', 'SRV', 'CNAME', 'TLSA'].includes(r.type)) continue;
-    const key = `${r.name}|${r.type}`;
-    const g = grouped.get(key) ?? { name: r.name, type: r.type, contents: [] };
-    g.contents.push(r.content);
-    grouped.set(key, g);
-  }
-  const existing = await dns.listRecords(domain);
-  for (const g of grouped.values()) {
-    if (g.type === 'TXT') {
-      // Keep unrelated TXT records (site verifications…) on the same name.
-      const rel = g.name.replace(/\.$/, '') === domain ? '@' : g.name.replace(/\.$/, '').replace(`.${domain}`, '');
-      const kind = (c: string) => (c.includes('v=spf1') ? 'spf' : c.includes('v=DMARC1') ? 'dmarc' : c.includes('v=DKIM1') ? 'dkim' : 'other');
-      const kinds = new Set(g.contents.map(kind));
-      const keep = existing
-        .filter((r) => r.type === 'TXT' && r.name === rel && !kinds.has(kind(r.content)))
-        .map((r) => r.content);
-      await dns.setRecords(domain, g.name, 'TXT', [...keep, ...g.contents]);
-    } else {
-      await dns.setRecords(domain, g.name, g.type, g.contents);
-    }
-  }
-  if (config.mailHostname && config.mailHostname.endsWith(`.${domain}`)) {
-    await dns.setRecords(domain, config.mailHostname.slice(0, -(domain.length + 1)), 'A', [config.serverIp]);
-  }
-  // webmail.<domain> → Roundcube (served by this server).
-  await dns.setRecords(domain, 'webmail', 'A', [config.serverIp]);
-}
-
 export default async function domainRoutes(app: FastifyInstance) {
   app.get('/api/domains', async () => {
     return all<DomainRow & { sites: number }>(
@@ -59,13 +27,23 @@ export default async function domainRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/domains', async (req) => {
-    const body = parse(z.object({ name: domainName, dns: z.boolean().default(true) }), req.body);
+    const body = parse(z.object({ name: domainName, dns: z.boolean().default(true), mail: z.boolean().default(true) }), req.body);
     if (get('SELECT 1 FROM domains WHERE name = ?', body.name)) throw badRequest('El dominio ya existe');
     if (body.dns) await dns.createZone(body.name, dns.defaultZoneRecords(body.name));
     const { id } = run('INSERT INTO domains (name, dns_enabled) VALUES (?, ?)', body.name, body.dns ? 1 : 0);
     run('INSERT INTO security (domain_id) VALUES (?)', id);
     audit(req.user!.username, 'domain.create', body.name, req.ip);
-    return getDomain(id);
+    // Mail ready from minute one: mail domain, DKIM key and every DNS record mailboxes need.
+    let mailError: string | null = null;
+    if (body.mail && mailAvailable()) {
+      try {
+        await enableMailForDomain(getDomain(id));
+        await syncCaddy();
+      } catch (err) {
+        mailError = (err as Error).message;
+      }
+    }
+    return { ...getDomain(id), mail_error: mailError };
   });
 
   app.get('/api/domains/:id', async (req) => {
@@ -151,9 +129,7 @@ export default async function domainRoutes(app: FastifyInstance) {
     const { id } = parse(idParam, req.params);
     const d = getDomain(id);
     if (!config.mailHostname && !config.dev) throw new HttpError(400, 'El servidor de correo no está configurado (HP_MAIL_HOSTNAME)');
-    await mail.ensureMailDomain(d.name);
-    if (d.dns_enabled) await publishMailRecords(d.name);
-    run('UPDATE domains SET mail_enabled = 1 WHERE id = ?', id);
+    await enableMailForDomain(d);
     await syncCaddy();
     audit(req.user!.username, 'mail.enable', d.name, req.ip);
     return getDomain(id);

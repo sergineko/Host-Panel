@@ -5,6 +5,7 @@ import { renderSVG } from 'uqr';
 import { Laptop, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
+import { MainDomainCard } from '../components/Connection';
 import { Badge, Button, Card, Copyable, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Textarea } from '../components/ui';
 
 interface Settings {
@@ -224,6 +225,9 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="Ajustes" description="Servidor, seguridad de tu cuenta y acceso al panel." />
+      <div className="mb-4">
+        <MainDomainCard />
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Servidor">
           {s.isLoading ? (

@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { ChevronRight, Globe, Plus } from 'lucide-react';
 import { api, type Domain } from '../lib/api';
 import { timeAgo } from '../lib/format';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Toggle } from '../components/ui';
+import { Badge, Button, Callout, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Toggle } from '../components/ui';
+import { MainDomainCard, useIdentity } from '../components/Connection';
 
 export default function Domains() {
   const qc = useQueryClient();
@@ -14,11 +15,16 @@ export default function Domains() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [dns, setDns] = useState(true);
+  const [mail, setMail] = useState(true);
+  const identity = useIdentity();
+  const mailReady = identity.data?.mail_ready ?? false;
 
   const create = useMutation({
-    mutationFn: () => api.post<Domain>('/api/domains', { name, dns }),
+    mutationFn: () => api.post<Domain & { mail_error: string | null }>('/api/domains', { name, dns, mail: mail && mailReady }),
     onSuccess: (d) => {
-      toast.success(`Dominio ${d.name} añadido`);
+      toast.success(`Dominio ${d.name} añadido${d.mail_enabled ? ' con el correo listo' : ''}`);
+      if (d.mail_error) toast.error(`El correo no se pudo activar: ${d.mail_error}`);
+      qc.invalidateQueries({ queryKey: ['identity'] });
       qc.invalidateQueries({ queryKey: ['domains'] });
       setOpen(false);
       setName('');
@@ -37,6 +43,11 @@ export default function Domains() {
           </Button>
         }
       />
+      {identity.data && !identity.data.nameservers_ready && (
+        <div className="mb-5">
+          <MainDomainCard />
+        </div>
+      )}
       <Card padded={false}>
         {q.isLoading ? (
           <Spinner />
@@ -111,6 +122,16 @@ export default function Domains() {
             label="Gestionar DNS en este servidor"
             description="Crea la zona con registros A, www, CAA. Desactívalo si el DNS está en otro proveedor (Cloudflare, registrador…)."
           />
+          {mailReady ? (
+            <Toggle
+              checked={mail}
+              onChange={setMail}
+              label="Activar el correo"
+              description="Crea la clave DKIM y todos los registros que necesitan los buzones: MX, SPF, DKIM, DMARC, autoconfiguración y webmail."
+            />
+          ) : (
+            <Callout tone="info">El correo se podrá activar cuando el servidor tenga dominio principal.</Callout>
+          )}
         </form>
       </Modal>
     </>

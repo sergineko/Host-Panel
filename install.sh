@@ -9,6 +9,8 @@
 #    --email  tu@correo.com   Email para Let's Encrypt                            HP_EMAIL
 #    --yes                    Sin preguntas (usa valores por defecto)            HP_YES=1
 #    --update                 Actualiza el panel conservando datos y secretos
+#    --keep-code              No descarga código nuevo (para cambiar solo la configuración,
+#                             por ejemplo el dominio principal desde el panel)       HP_KEEP_CODE=1
 #
 #  Sistemas soportados: Ubuntu 22.04 / 24.04, Debian 12 / 13 (x86_64 o arm64).
 # =====================================================================================
@@ -86,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --email) EMAIL=${2:-}; shift 2 ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --update) UPDATE=1; ASSUME_YES=1; shift ;;
+    --keep-code) HP_KEEP_CODE=1; shift ;;
     *) die "Opción desconocida: $1" ;;
   esac
 done
@@ -125,8 +128,15 @@ if [[ -f $ENV_FILE ]]; then
   . "$ENV_FILE"
   set +a
   ok "Instalación existente: se conservan configuración, secretos y datos"
+  PREVIOUS_DOMAIN=${HP_BASE_DOMAIN:-}
   DOMAIN=${DOMAIN:-${HP_BASE_DOMAIN:-}}
   EMAIL=${EMAIL:-${HP_ADMIN_EMAIL:-}}
+  # New main domain (for example a server installed with only its IP): derive panel.*, mail.*,
+  # ns1.* and ns2.* from it again instead of keeping the old names.
+  if [[ -n ${DOMAIN:-} && ${DOMAIN,,} != "${PREVIOUS_DOMAIN,,}" ]]; then
+    unset HP_PANEL_DOMAIN HP_MAIL_HOSTNAME HP_NS1 HP_NS2
+    ok "Nuevo dominio principal: $DOMAIN"
+  fi
 elif [[ $UPDATE == 1 ]]; then
   die "No hay ninguna instalación que actualizar."
 fi
@@ -230,7 +240,9 @@ fi
 
 # =====================================================================================
 step "Código de HostPanel"
-if [[ -f $SCRIPT_DIR/panel/api/package.json && $SCRIPT_DIR != "$APP_DIR" ]]; then
+if [[ ${HP_KEEP_CODE:-0} == 1 && -f $APP_DIR/panel/api/package.json ]]; then
+  ok "Se mantiene el código instalado"
+elif [[ -f $SCRIPT_DIR/panel/api/package.json && $SCRIPT_DIR != "$APP_DIR" ]]; then
   mkdir -p "$APP_DIR"
   rsync -a --delete --exclude node_modules --exclude dist --exclude .git "$SCRIPT_DIR/" "$APP_DIR/"
   ok "Copiado desde $SCRIPT_DIR"

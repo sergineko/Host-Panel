@@ -31,6 +31,8 @@ import nodeRoutes from './routes/nodejs.ts';
 import certificateRoutes from './routes/certificates.ts';
 import siteToolRoutes from './routes/sitetools.ts';
 import siteAccessRoutes from './routes/siteaccess.ts';
+import identityRoutes from './routes/identity.ts';
+import { reconcileIdentity } from './services/identity.ts';
 import wpToolkitRoutes from './routes/wptoolkit.ts';
 import { startWpAutoUpdates } from './services/wptoolkit.ts';
 import { startBackupScheduler } from './services/backups.ts';
@@ -74,6 +76,7 @@ await app.register(nodeRoutes);
 await app.register(certificateRoutes);
 await app.register(siteToolRoutes);
 await app.register(siteAccessRoutes);
+await app.register(identityRoutes);
 await app.register(wpToolkitRoutes);
 
 // Single-page app.
@@ -109,6 +112,8 @@ await startInternalServer();
 startQueueDispatcher();
 startCronScheduler();
 startSiteCronScheduler();
+// New main domain or nameservers since last boot: update every zone (and mail) to match.
+reconcileIdentity().catch((err) => console.error('Identidad del servidor:', err.message));
 startBackupScheduler();
 startWpAutoUpdates();
 startKvJanitor();

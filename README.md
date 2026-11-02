@@ -65,6 +65,52 @@ Conserva sitios, bases de datos, correo y DNS (reinstalar los recupera). Para bo
 sudo hostpanel uninstall --purge
 ```
 
+## Dominios, nameservers y correo
+
+### 1. Elige el dominio principal del servidor
+
+El servidor necesita un dominio propio para tener **nameservers** (`ns1`/`ns2`) y **servidor de correo** (`mail`).
+Si lo instalaste solo con la IP, añade uno de tus dominios en **Dominios** y elígelo en **Ajustes → Dominio principal
+del servidor** (o en el aviso que aparece en Dominios). El panel reejecuta el instalador con ese dominio: instala el
+correo si faltaba, abre sus puertos y configura:
+
+| Nombre | Para qué |
+|---|---|
+| `ns1.<principal>` y `ns2.<principal>` | Nameservers de **todos** tus dominios |
+| `mail.<principal>` | Servidor de correo: MX de todos tus dominios, IMAP y SMTP |
+| `panel.<principal>` | Acceso al panel con SSL |
+
+Al terminar, todas las zonas pasan a usar esos nameservers y todos los dominios reciben su correo.
+
+### 2. En el registrador del dominio principal: glue records
+
+Como `ns1.<principal>` está dentro del propio dominio, el registrador necesita saber su IP. Busca **«Nameservers
+propios»**, «Child nameservers», «Glue records» o «Registrar host» y crea `ns1.<principal>` y `ns2.<principal>` con la
+IP del servidor (los dos con la misma IP: los registradores exigen dos nombres, no dos máquinas). Después cambia los
+nameservers del dominio a esos dos nombres.
+
+### 3. En el resto de dominios
+
+Solo hay que poner `ns1.<principal>` y `ns2.<principal>` como nameservers personalizados en su registrador. Si prefieres
+mantener el DNS en otro proveedor (Cloudflare, tu registrador…), la pestaña **Conexión** de cada dominio lista todos los
+registros que tienes que copiar allí.
+
+La pestaña **Conexión** comprueba en vivo qué ve internet (nameservers, registro A y MX) y marca cada paso cuando se
+completa. La propagación suele tardar menos de una hora (como mucho 48 h).
+
+### 4. Reverse DNS (PTR)
+
+Para que Gmail y Outlook acepten tu correo, configura en el **proveedor del VPS** (no en el registrador) el reverse DNS de
+la IP del servidor apuntando a `mail.<principal>`.
+
+### Qué se crea al añadir un dominio
+
+- Zona DNS con `A`, `www`, `CAA` (solo Let's Encrypt y Sectigo) y los nameservers del servidor.
+- Si el servidor tiene correo: dominio de correo con su clave **DKIM** y todos los registros que necesitan los buzones:
+  `MX`, `SPF`, `DKIM`, `DMARC`, `MTA-STS`, informe TLS, `SRV` de IMAP/SMTP, `autoconfig`/`autodiscover` y
+  `webmail.<dominio>`. Cualquier buzón que crees funciona sin tocar el DNS.
+- Certificados SSL de Let's Encrypt en cuanto el DNS apunta al servidor.
+
 ## Comandos
 
 | Comando | Qué hace |

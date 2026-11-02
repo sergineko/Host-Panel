@@ -481,3 +481,34 @@ export interface CertOverview {
   server_ipv6: string | null;
   certificates: CertInfo[];
 }
+
+// --- Server identity and domain delegation ------------------------------------------------
+
+export interface ServerIdentity {
+  base_domain: string | null;
+  panel_domain: string | null;
+  mail_hostname: string | null;
+  nameservers: string[];
+  nameservers_ready: boolean;
+  mail_ready: boolean;
+  server_ip: string;
+  server_ipv6: string | null;
+  admin_email: string;
+  job: { id: number } | null;
+  candidates?: { id: number; name: string }[];
+}
+
+export interface Delegation {
+  domain: string;
+  is_main: boolean;
+  expected_nameservers: string[];
+  current_nameservers: string[];
+  delegated: boolean;
+  glue: { host: string; ipv4: string; ipv6: string | null }[];
+  public_a: string[];
+  public_mx: string[];
+  points_here: boolean;
+  mail_ok: boolean;
+  identity: ServerIdentity;
+  records: DnsRecord[];
+}

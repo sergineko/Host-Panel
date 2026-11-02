@@ -91,10 +91,18 @@ export async function removeMailDomain(domain: string) {
 /** DNS records Stalwart recommends for a domain (MX, SPF, DKIM, DMARC, SRV autoconfig…). */
 export async function mailDnsRecords(domain: string): Promise<{ type: string; name: string; content: string }[]> {
   if (config.dev) {
+    const host = config.mailHostname || `mail.${domain}`;
     return [
-      { type: 'MX', name: `${domain}.`, content: `10 ${config.mailHostname || `mail.${domain}`}.` },
+      { type: 'MX', name: `${domain}.`, content: `10 ${host}.` },
       { type: 'TXT', name: `${domain}.`, content: 'v=spf1 mx ra=postmaster -all' },
-      { type: 'TXT', name: `_dmarc.${domain}.`, content: 'v=DMARC1; p=quarantine; rua=mailto:postmaster@' + domain },
+      { type: 'TXT', name: `202611r._domainkey.${domain}.`, content: 'v=DKIM1; k=rsa; h=sha256; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwVh2…IDAQAB' },
+      { type: 'TXT', name: `_dmarc.${domain}.`, content: `v=DMARC1; p=reject; rua=mailto:postmaster@${domain}; ruf=mailto:postmaster@${domain}` },
+      { type: 'TXT', name: `mta-sts.${domain}.`, content: 'v=STSv1; id=1730000000' },
+      { type: 'TXT', name: `_smtp._tls.${domain}.`, content: `v=TLSRPTv1; rua=mailto:postmaster@${domain}` },
+      { type: 'SRV', name: `_imaps._tcp.${domain}.`, content: `0 1 993 ${host}.` },
+      { type: 'SRV', name: `_submissions._tcp.${domain}.`, content: `0 1 465 ${host}.` },
+      { type: 'CNAME', name: `autoconfig.${domain}.`, content: `${host}.` },
+      { type: 'CNAME', name: `autodiscover.${domain}.`, content: `${host}.` },
     ];
   }
   return stalwart('GET', `/dns/records/${encodeURIComponent(domain)}`);
