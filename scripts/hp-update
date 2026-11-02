@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# =====================================================================================
+#  HostPanel — actualizador del panel y de sus componentes
+#
+#    hp-update <componente> [--log fichero]
+#
+#  Componentes: panel | caddy | stalwart | roundcube | node | system | all
+#  Lo lanza el panel (como unidad transitoria de systemd, para sobrevivir a su propio
+#  reinicio) o `hostpanel update`. Termina siempre con la línea "HP_JOB_DONE rc=N".
+# =====================================================================================
+set -Eeuo pipefail
+
+# Updating the panel rewrites this file (git reset) and bash reads scripts while running:
+# always run from a private copy.
+if [[ -z ${HP_UPDATE_COPY:-} ]]; then
+  copy=$(mktemp /tmp/hp-update.XXXXXX)
+  cp "$0" "$copy"
+  HP_UPDATE_COPY=$copy exec bash "$copy" "$@"
+fi
+trap 'rm -f "$HP_UPDATE_COPY"' EXIT
+
+APP_DIR=/opt/hostpanel
+ENV_FILE=/etc/hostpanel/hostpanel.env
+COMPONENT=${1:-all}
+LOG=''
+shift || true
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --log) LOG=${2:-}; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [[ -n $LOG ]]; then
+  mkdir -p "$(dirname "$LOG")"
+  exec >>"$LOG" 2>&1
+fi
+
+finish() {
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then echo "✔ Actualización completada"; else echo "✖ La actualización falló (código $rc)"; fi
+  echo "HP_JOB_DONE rc=$rc"
+  rm -f "$HP_UPDATE_COPY"
+}
+trap finish EXIT
+
+[[ $EUID -eq 0 ]] || { echo "Necesita root"; exit 1; }
+# shellcheck disable=SC1090
+[[ -f $ENV_FILE ]] && { set -a; . "$ENV_FILE"; set +a; }
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+case "$(uname -m)" in
+  x86_64) ARCH=amd64; STALWART_TRIPLE=x86_64-unknown-linux-gnu ;;
+  aarch64|arm64) ARCH=arm64; STALWART_TRIPLE=aarch64-unknown-linux-gnu ;;
+  *) echo "Arquitectura no soportada"; exit 1 ;;
+esac
+
+say() { printf '\n▶ %s\n' "$*"; }
+
+github_latest() {
+  curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$1/releases/latest" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1
+}
+
+update_panel() {
+  say "HostPanel"
+  if [[ ! -d $APP_DIR/.git ]]; then echo "La instalación no viene de git: se omite."; return 0; fi
+  local before after
+  before=$(git -C "$APP_DIR" rev-parse --short HEAD)
+  git -C "$APP_DIR" fetch --depth 1 origin "${HP_BRANCH:-main}"
+  git -C "$APP_DIR" reset --hard FETCH_HEAD
+  after=$(git -C "$APP_DIR" rev-parse --short HEAD)
+  echo "Versión: $before → $after"
+  (cd "$APP_DIR/panel/api" && npm ci --omit=dev --no-audit --no-fund)
+  (cd "$APP_DIR/panel/web" && { npm ci --no-audit --no-fund || { rm -rf node_modules && npm install --no-audit --no-fund; }; } && npm run build && rm -rf node_modules)
+  install -m 0755 "$APP_DIR/scripts/hostpanel" /usr/local/bin/hostpanel
+  cp "$APP_DIR/templates/systemd/hostpanel.service" /etc/systemd/system/hostpanel.service
+  systemctl daemon-reload
+  systemctl restart hostpanel
+  for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health && break; sleep 1; done
+  curl -fsS -o /dev/null http://127.0.0.1:3000/api/health && echo "Panel en marcha"
+}
+
+update_caddy() {
+  say "Caddy + WAF"
+  local url="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
+  echo "Antes: $(/usr/local/bin/caddy version 2>/dev/null | awk '{print $1}')"
+  curl -fsSL --retry 3 --max-time 300 "$url" -o /tmp/caddy.new
+  chmod +x /tmp/caddy.new
+  /tmp/caddy.new list-modules | grep -qx http.handlers.waf || { echo "El binario descargado no tiene el WAF"; exit 1; }
+  install -m 0755 /tmp/caddy.new /usr/local/bin/caddy
+  rm -f /tmp/caddy.new
+  systemctl restart caddy
+  sleep 2
+  systemctl is-active --quiet caddy
+  echo "Ahora: $(/usr/local/bin/caddy version | awk '{print $1}')"
+  # The panel pushes the full configuration again.
+  (cd "$APP_DIR/panel/api" && node --disable-warning=ExperimentalWarning src/cli.ts sync-proxy) || true
+}
+
+update_stalwart() {
+  [[ -x /opt/stalwart/bin/stalwart ]] || { echo "Stalwart no está instalado: se omite."; return 0; }
+  say "Stalwart Mail"
+  curl -fsSL --retry 3 --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/latest/download/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz
+  rm -rf /tmp/stalwart.new && mkdir -p /tmp/stalwart.new
+  tar -xzf /tmp/stalwart.tgz -C /tmp/stalwart.new
+  local bin=/tmp/stalwart.new/stalwart
+  [[ -f $bin ]] || bin=/tmp/stalwart.new/stalwart-mail
+  systemctl stop stalwart
+  install -m 0755 -o stalwart -g stalwart "$bin" /opt/stalwart/bin/stalwart
+  systemctl start stalwart
+  rm -rf /tmp/stalwart.tgz /tmp/stalwart.new
+  echo "Ahora: $(/opt/stalwart/bin/stalwart --version 2>/dev/null || echo '?')"
+}
+
+update_roundcube() {
+  [[ -f /var/www/roundcube/index.php ]] || { echo "Roundcube no está instalado: se omite."; return 0; }
+  say "Roundcube"
+  local version
+  version=$(github_latest roundcube/roundcubemail)
+  [[ -n $version ]] || { echo "No se pudo consultar la última versión"; exit 1; }
+  echo "Última versión: $version"
+  curl -fsSL --retry 3 --max-time 300 "https://github.com/roundcube/roundcubemail/releases/download/${version}/roundcubemail-${version}-complete.tar.gz" -o /tmp/roundcube.tgz
+  rm -rf /tmp/roundcube.new && mkdir -p /tmp/roundcube.new
+  tar -xzf /tmp/roundcube.tgz -C /tmp/roundcube.new --strip-components=1
+  # Keep our configuration; the installer directory is never published.
+  rsync -a --delete --exclude config/config.inc.php --exclude installer /tmp/roundcube.new/ /var/www/roundcube/
+  rm -rf /var/www/roundcube/installer /tmp/roundcube.tgz /tmp/roundcube.new
+  chown -R root:hp-roundcube /var/www/roundcube
+  chmod -R g+rX,o-rwx /var/www/roundcube
+  setfacl -R -m u:caddy:rX /var/www/roundcube
+  runuser -u hp-roundcube -- php /var/www/roundcube/bin/updatedb.sh --package=roundcube --dir=/var/www/roundcube/SQL || true
+  systemctl reload "php${HP_PHP_VERSION:-8.3}-fpm" || true
+}
+
+update_node() {
+  say "Node.js"
+  apt-get update
+  apt-get install --only-upgrade "${APT_OPTS[@]}" nodejs
+  node -v
+  systemctl restart hostpanel
+}
+
+update_system() {
+  say "Paquetes del sistema (MariaDB, PowerDNS, PHP, seguridad)"
+  apt-get update
+  apt-get upgrade "${APT_OPTS[@]}"
+  apt-get autoremove -y
+  # Reload what may have been upgraded without restarting connections.
+  for unit in $(systemctl list-units --type=service --state=running --no-legend 'php*-fpm.service' | awk '{print $1}'); do
+    systemctl reload "$unit" || true
+  done
+  if [[ -f /var/run/reboot-required ]]; then echo "⚠ El sistema pide un reinicio (kernel actualizado). Reinicia el servidor cuando puedas."; fi
+}
+
+echo "HostPanel — actualización de: $COMPONENT ($(date -u +%FT%TZ))"
+case $COMPONENT in
+  panel) update_panel ;;
+  caddy) update_caddy ;;
+  stalwart) update_stalwart ;;
+  roundcube) update_roundcube ;;
+  node) update_node ;;
+  system) update_system ;;
+  all)
+    update_system
+    update_caddy
+    update_stalwart
+    update_roundcube
+    # Last: restarts the panel with the new code.
+    update_panel
+    ;;
+  *) echo "Componente desconocido: $COMPONENT"; exit 2 ;;
+esac

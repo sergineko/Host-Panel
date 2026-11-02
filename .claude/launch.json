@@ -10,6 +10,7 @@
         "HP_DATA_DIR": ".dev-data",
         "HP_LOG_DIR": ".dev-data",
         "HP_SITES_DIR": ".dev-data/sites",
+        "HP_STORAGE_DIR": ".dev-data/storage",
         "HP_ENV_FILE": ".dev-data/none.env",
         "HP_MAIL_HOSTNAME": "mail.ejemplo.com",
         "HP_PANEL_DOMAIN": "panel.ejemplo.com",

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { audit, get, run } from './db.ts';
-import { hashPassword, randomToken, sha256, verifyPassword } from './lib/crypto.ts';
+import { all, audit, get, run } from './db.ts';
+import { hashPassword, newTotpSecret, randomToken, sha256, totpUri, verifyPassword, verifyTotp } from './lib/crypto.ts';
 import { HttpError, parse } from './lib/validate.ts';
 import { config } from './config.ts';
 
@@ -13,7 +13,9 @@ declare module 'fastify' {
 
 const COOKIE = 'hp_session';
 const SESSION_TTL = 12 * 3600 * 1000;
-const PUBLIC_PREFIXES = ['/api/auth/login', '/api/webhooks/', '/api/health'];
+// Token APIs (storage, databases) check their own Bearer tokens.
+const PUBLIC_PREFIXES = ['/api/auth/login', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/d1/v1/'];
+const pendingTotp = new Map<number, string>();
 
 // Brute-force protection: 8 failed attempts per IP in 15 minutes.
 const failures = new Map<string, { count: number; until: number }>();
@@ -79,12 +81,21 @@ export async function authPlugin(app: FastifyInstance) {
   app.post('/api/auth/login', async (req, reply) => {
     const ip = req.ip;
     checkThrottle(ip);
-    const body = parse(z.object({ username: z.string().min(1), password: z.string().min(1) }), req.body);
-    const user = get<{ id: number; password_hash: string }>('SELECT id, password_hash FROM users WHERE username = ?', body.username);
+    const body = parse(z.object({ username: z.string().min(1), password: z.string().min(1), code: z.string().max(10).optional() }), req.body);
+    const user = get<{ id: number; password_hash: string; totp_secret: string }>('SELECT id, password_hash, totp_secret FROM users WHERE username = ?', body.username);
     if (!user || !(await verifyPassword(body.password, user.password_hash))) {
       registerFailure(ip);
       audit(body.username, 'login.failed', '', ip);
       throw new HttpError(401, 'Usuario o contraseña incorrectos');
+    }
+    if (user.totp_secret) {
+      // Second step: the password was right, now the authenticator code.
+      if (!body.code) return { totp_required: true };
+      if (!verifyTotp(user.totp_secret, body.code)) {
+        registerFailure(ip);
+        audit(body.username, 'login.2fa_failed', '', ip);
+        throw new HttpError(401, 'Código de verificación incorrecto');
+      }
     }
     failures.delete(ip);
     const token = randomToken();
@@ -109,7 +120,54 @@ export async function authPlugin(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get('/api/auth/me', async (req) => ({ username: req.user!.username }));
+  app.get('/api/auth/me', async (req) => {
+    const u = get<{ totp_secret: string }>('SELECT totp_secret FROM users WHERE id = ?', req.user!.id);
+    return { username: req.user!.username, totp: !!u?.totp_secret };
+  });
+
+  // --- two-factor authentication (TOTP) -------------------------------------------------
+  app.post('/api/auth/2fa/setup', async (req) => {
+    const secret = newTotpSecret();
+    pendingTotp.set(req.user!.id, secret);
+    return { secret, uri: totpUri(secret, req.user!.username) };
+  });
+
+  app.post('/api/auth/2fa/enable', async (req) => {
+    const { code } = parse(z.object({ code: z.string().min(6).max(10) }), req.body);
+    const secret = pendingTotp.get(req.user!.id);
+    if (!secret) throw new HttpError(400, 'Vuelve a empezar la configuración');
+    if (!verifyTotp(secret, code)) throw new HttpError(400, 'El código no es correcto. Revisa la hora del móvil.');
+    run('UPDATE users SET totp_secret = ? WHERE id = ?', secret, req.user!.id);
+    pendingTotp.delete(req.user!.id);
+    audit(req.user!.username, '2fa.enable', '', req.ip);
+    return { ok: true };
+  });
+
+  app.post('/api/auth/2fa/disable', async (req) => {
+    const { password } = parse(z.object({ password: z.string().min(1) }), req.body);
+    const user = get<{ password_hash: string }>('SELECT password_hash FROM users WHERE id = ?', req.user!.id)!;
+    if (!(await verifyPassword(password, user.password_hash))) throw new HttpError(400, 'Contraseña incorrecta');
+    run("UPDATE users SET totp_secret = '' WHERE id = ?", req.user!.id);
+    audit(req.user!.username, '2fa.disable', '', req.ip);
+    return { ok: true };
+  });
+
+  // --- active sessions --------------------------------------------------------------------
+  app.get('/api/auth/sessions', async (req) => {
+    const current = sha256(req.cookies[COOKIE] ?? '');
+    return all<{ id: string; expires_at: number; ip: string; user_agent: string }>(
+      'SELECT id, expires_at, ip, user_agent FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY expires_at DESC',
+      req.user!.id,
+      Date.now(),
+    ).map((s) => ({ id: s.id.slice(0, 16), ip: s.ip, user_agent: s.user_agent, expires_at: s.expires_at, current: s.id === current }));
+  });
+
+  app.delete('/api/auth/sessions/:id', async (req) => {
+    const { id } = parse(z.object({ id: z.string().regex(/^[a-f0-9]{16}$/) }), req.params);
+    run("DELETE FROM sessions WHERE user_id = ? AND substr(id, 1, 16) = ?", req.user!.id, id);
+    audit(req.user!.username, 'session.revoke', id, req.ip);
+    return { ok: true };
+  });
 
   app.post('/api/auth/password', async (req) => {
     const body = parse(

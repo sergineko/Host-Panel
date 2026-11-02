@@ -47,6 +47,8 @@ async function publishMailRecords(domain: string) {
   if (config.mailHostname && config.mailHostname.endsWith(`.${domain}`)) {
     await dns.setRecords(domain, config.mailHostname.slice(0, -(domain.length + 1)), 'A', [config.serverIp]);
   }
+  // webmail.<domain> → Roundcube (served by this server).
+  await dns.setRecords(domain, 'webmail', 'A', [config.serverIp]);
 }
 
 export default async function domainRoutes(app: FastifyInstance) {
@@ -152,6 +154,7 @@ export default async function domainRoutes(app: FastifyInstance) {
     await mail.ensureMailDomain(d.name);
     if (d.dns_enabled) await publishMailRecords(d.name);
     run('UPDATE domains SET mail_enabled = 1 WHERE id = ?', id);
+    await syncCaddy();
     audit(req.user!.username, 'mail.enable', d.name, req.ip);
     return getDomain(id);
   });
@@ -173,6 +176,7 @@ export default async function domainRoutes(app: FastifyInstance) {
     const d = getDomain(id);
     await mail.removeMailDomain(d.name);
     run('UPDATE domains SET mail_enabled = 0 WHERE id = ?', id);
+    await syncCaddy();
     audit(req.user!.username, 'mail.disable', d.name, req.ip);
     return getDomain(id);
   });
@@ -202,6 +206,11 @@ export default async function domainRoutes(app: FastifyInstance) {
         security_headers: z.boolean(),
         hsts: z.boolean(),
         compression: z.boolean(),
+        block_sensitive: z.boolean().default(true),
+        hotlink: z.boolean().default(false),
+        max_body_mb: z.number().int().min(0).max(10240).default(0),
+        cache_static: z.boolean().default(true),
+        cache_ttl: z.number().int().min(0).max(31536000).default(604800),
       }),
       req.body,
     );
@@ -209,12 +218,14 @@ export default async function domainRoutes(app: FastifyInstance) {
     // New token each time the mode is switched on (old clearance cookies stop working).
     const token = body.under_attack ? (prev.under_attack && prev.under_attack_token ? prev.under_attack_token : randomToken(18)) : '';
     run(
-      `INSERT INTO security (domain_id, waf_mode, paranoia, rate_limit_rpm, block_bots, under_attack, under_attack_token, security_headers, hsts, compression)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO security (domain_id, waf_mode, paranoia, rate_limit_rpm, block_bots, under_attack, under_attack_token, security_headers, hsts, compression,
+         block_sensitive, hotlink, max_body_mb, cache_static, cache_ttl)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(domain_id) DO UPDATE SET waf_mode = excluded.waf_mode, paranoia = excluded.paranoia,
          rate_limit_rpm = excluded.rate_limit_rpm, block_bots = excluded.block_bots, under_attack = excluded.under_attack,
          under_attack_token = excluded.under_attack_token, security_headers = excluded.security_headers,
-         hsts = excluded.hsts, compression = excluded.compression`,
+         hsts = excluded.hsts, compression = excluded.compression, block_sensitive = excluded.block_sensitive,
+         hotlink = excluded.hotlink, max_body_mb = excluded.max_body_mb, cache_static = excluded.cache_static, cache_ttl = excluded.cache_ttl`,
       id,
       body.waf_mode,
       body.paranoia,
@@ -225,6 +236,11 @@ export default async function domainRoutes(app: FastifyInstance) {
       Number(body.security_headers),
       Number(body.hsts),
       Number(body.compression),
+      Number(body.block_sensitive),
+      Number(body.hotlink),
+      body.max_body_mb,
+      Number(body.cache_static),
+      body.cache_ttl,
     );
     await syncCaddy();
     audit(req.user!.username, 'security.update', d.name, req.ip);

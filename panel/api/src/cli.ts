@@ -6,7 +6,7 @@
  */
 import { setUserPassword } from './auth.ts';
 import { config } from './config.ts';
-import { get, run } from './db.ts';
+import { get, run, setSetting } from './db.ts';
 import { randomPassword } from './lib/crypto.ts';
 import { DOMAIN_RE } from './lib/validate.ts';
 import { syncCaddy } from './services/caddy.ts';
@@ -49,6 +49,18 @@ try {
       console.log(`Usuario:    ${username}\nContraseña: ${password}`);
       break;
     }
+    case 'disable-2fa': {
+      const username = args[0] || 'admin';
+      const r = run("UPDATE users SET totp_secret = '' WHERE username = ?", username);
+      console.log(r.changes ? `2FA desactivado para ${username}.` : `No existe el usuario ${username}.`);
+      break;
+    }
+    case 'panel-access-reset':
+      // Recovery when the panel IP allowlist locks you out.
+      setSetting('panel_allow_ips', '');
+      await syncCaddy();
+      console.log('Restricción de IPs del panel eliminada.');
+      break;
     case 'sync-proxy':
       await syncCaddy();
       console.log('Configuración del proxy aplicada.');
@@ -58,7 +70,7 @@ try {
       await bootstrapDomain(args[0]);
       break;
     default:
-      console.log('Uso: cli.ts reset-password [usuario] [contraseña] | sync-proxy | bootstrap-domain <dominio>');
+      console.log('Uso: cli.ts reset-password [usuario] [contraseña] | disable-2fa [usuario] | panel-access-reset | sync-proxy | bootstrap-domain <dominio>');
       process.exit(1);
   }
 } catch (err) {

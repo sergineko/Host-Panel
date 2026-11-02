@@ -31,6 +31,10 @@ export const config = {
   dataDir: env('HP_DATA_DIR', '/var/lib/hostpanel'),
   sitesDir: env('HP_SITES_DIR', '/srv/hostpanel/sites'),
   logDir: env('HP_LOG_DIR', '/var/log/hostpanel'),
+  storageDir: env('HP_STORAGE_DIR', '/srv/hostpanel/storage'),
+  appDir: env('HP_APP_DIR', fileURLToPath(new URL('../../..', import.meta.url))),
+  /** Max size of one uploaded object (bytes). */
+  maxObjectSize: Number(env('HP_MAX_OBJECT_MB', '5120')) * 1024 * 1024,
   webDist: env('HP_WEB_DIST', fileURLToPath(new URL('../../web/dist', import.meta.url))),
   secret: env('HP_SECRET', 'dev-secret-change-me'),
 
@@ -60,9 +64,8 @@ export const config = {
 
   mysqlSocket: env('HP_MYSQL_SOCKET', '/run/mysqld/mysqld.sock'),
 
+  /** PHP version chosen at install time (Roundcube runs on it; first default for sites). */
   phpVersion,
-  phpFpmService: `php${phpVersion}-fpm`,
-  phpPoolDir: env('HP_PHP_POOL_DIR', `/etc/php/${phpVersion}/fpm/pool.d`),
   roundcubeDir: env('HP_ROUNDCUBE_DIR', '/var/www/roundcube'),
 };
 

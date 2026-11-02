@@ -49,7 +49,7 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 | **Stalwart Mail** | binario oficial → `/opt/stalwart` | SMTP, IMAP, JMAP, DKIM, SPF/DMARC, antispam |
 | **Roundcube** | tarball oficial → `/var/www/roundcube` | Webmail para todos los dominios |
 | **MariaDB** | apt `mariadb-server` | Bases de datos de los sitios |
-| **PHP-FPM** | apt `php-fpm` + extensiones | Sitios PHP (WordPress, Laravel…), un pool aislado por sitio |
+| **PHP-FPM** | repositorio de Ondřej Surý (7.4 → 8.5) | Sitios PHP (WordPress, Laravel…), un pool aislado por sitio y versión elegible por sitio |
 | **Node.js 24** | NodeSource | Ejecuta el panel, compila y sirve sitios Node |
 
 ### Stack del panel
@@ -91,13 +91,36 @@ El panel es el "cerebro": guarda su estado en SQLite y empuja la configuración 
 | **Analítica** | Peticiones, tráfico, errores y bloqueos por dominio + log en vivo |
 | **Sistema** | CPU, RAM, disco, estado de servicios |
 
-### Fase 2 — Paridad cPanel
-Gestor de archivos, SFTP por sitio, cron por sitio, copias de seguridad (local/S3), 2FA TOTP,
-multiusuario con roles y cuotas, phpMyAdmin con SSO, versiones múltiples de PHP.
+### Fase 2 — Multi-servidor, almacenamiento y seguridad (esta entrega)
+| Módulo | Funcionalidad |
+|---|---|
+| **Servidores remotos** | Añadir VPS con un comando (`node-install.sh`); el panel compila y copia cada release por SSH/rsync a los servidores elegidos del sitio |
+| **Balanceador de carga** | Caddy reparte el tráfico entre este servidor y los VPS (por turnos, menos conexiones, por IP, principal/respaldo) con comprobación de salud activa y pasiva; TLS hasta cada nodo verificado con su CA interna |
+| **Varias versiones de PHP** | Instalar/desinstalar 7.4 → 8.5 desde el panel, versión por defecto, versión por sitio (en los VPS se instala sola) |
+| **Actualizador** | Compara versiones con GitHub/nodejs.org; actualiza panel, Caddy+WAF, Stalwart, Roundcube, Node y paquetes del sistema; actualizaciones nocturnas opcionales |
+| **Almacenamiento (estilo R2)** | Buckets públicos o privados, dominio propio con SSL y caché, CORS, explorador con subida por arrastre, API HTTP con tokens |
+| **Bases de datos (estilo D1)** | Consola SQL, explorador de tablas, API HTTP `POST /api/d1/v1/<bd>/query` con parámetros y transacciones, tokens de solo lectura, exportar/importar `.sql`, acceso remoto por IP |
+| **Seguridad** | 2FA TOTP, sesiones abiertas, lista de IPs del panel, archivos sensibles bloqueados, hotlinking, límite de subida, fail2ban SSH |
+| **Rendimiento** | Caché de estáticos, zstd/gzip, HTTP/3, BBR y ajustes de red, MariaDB y OPcache dimensionados, interfaz cargada por partes |
+| **Correo** | `webmail.<dominio>` y autoconfiguración por dominio, filtros, respuestas automáticas y reenvíos (ManageSieve) |
+| **Interfaz** | Buscador global (Ctrl+K), navegación agrupada, avisos de actualizaciones |
 
-### Fase 3 — Paridad Cloudflare
-Caché en el borde con purga, bloqueo por país (GeoIP), certificados wildcard por DNS-01 contra PowerDNS,
-DNSSEC con un clic, páginas de error personalizadas, notificaciones de ataques y despliegues.
+### Fase 3 — Hoja de ruta (ideas siguientes)
+- **Copias de seguridad automáticas** de sitios, bases de datos y correo a un bucket propio o a S3 externo, con restauración en un clic.
+- **Compatibilidad S3** (firmas SigV4) en el almacenamiento para usar rclone, aws-cli y SDKs.
+- **Despliegues de vista previa** por rama o pull request con subdominio automático (`pr-12.misitio.com`).
+- **Caché de páginas en el borde** con purga desde el panel o por webhook.
+- **Bloqueo por país (GeoIP)** y reglas WAF propias con expresiones (estilo Cloudflare).
+- **DNSSEC** con un clic y certificados *wildcard* por DNS-01 contra PowerDNS.
+- **Red privada WireGuard** entre el panel y los VPS (en lugar del puerto 8443 público filtrado).
+- **Funciones / workers**: código JS por ruta sin servidor dedicado.
+- **Cron y colas** por sitio, **Redis/Valkey** gestionado por sitio.
+- **Gestor de archivos** web y **SFTP** enjaulado por sitio.
+- **Monitor de disponibilidad** con página de estado pública y **notificaciones** (email, Telegram, Slack, webhook) de caídas, ataques y despliegues.
+- **Multiusuario** con roles (administrador, revendedor, cliente) y cuotas.
+- **Réplicas de MariaDB** entre nodos y conmutación por error.
+- **Imágenes optimizadas al vuelo** (redimensionado, WebP/AVIF) para los buckets públicos.
+- **Métricas por nodo** (CPU, memoria, peticiones) con históricos.
 
 ---
 
@@ -106,10 +129,13 @@ DNSSEC con un clic, páginas de error personalizadas, notificaciones de ataques 
 ```
 install.sh                  Instalador de un comando (también descarga el repo si se usa con curl)
 uninstall.sh                Desinstalador
+node-install.sh             Prepara un VPS como nodo de despliegue (y lo desinstala con --uninstall)
 scripts/hostpanel           CLI que se instala en /usr/local/bin
+scripts/hp-update           Actualizador del panel y de cada componente
 templates/                  Configuraciones de PowerDNS, Stalwart, Roundcube y unidades systemd
 panel/api/                  Backend Fastify (TypeScript)
-  src/services/             caddy, dns, mail, system, deploy, databases, analytics
+  src/services/             caddy, dns, mail, system, deploy, databases, analytics, php, servers,
+                            storage, tokens, updates, jobs
   src/routes/               endpoints REST
 panel/web/                  Frontend React
 ```
@@ -120,5 +146,7 @@ panel/web/                  Frontend React
 | `/opt/hostpanel` | Código del panel |
 | `/etc/hostpanel/hostpanel.env` | Configuración y secretos (0600) |
 | `/var/lib/hostpanel` | Base de datos SQLite del panel |
-| `/srv/hostpanel/sites/<id>` | `releases/`, `current` y `shared/` de cada sitio |
+| `/srv/hostpanel/sites/<id>` | `releases/`, `current` y `shared/` de cada sitio (igual en los VPS) |
+| `/srv/hostpanel/storage/<bucket>` | Archivos de cada bucket |
+| `/var/lib/hostpanel/ssh` | Clave SSH con la que el panel entra en los VPS |
 | `/var/log/hostpanel` | Logs de acceso de Caddy |

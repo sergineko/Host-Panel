@@ -9,6 +9,9 @@ import { startAnalytics } from './services/analytics.ts';
 import { syncCaddy } from './services/caddy.ts';
 import { startCertSync } from './services/certsync.ts';
 import { recoverInterruptedDeployments } from './services/deploy.ts';
+import { recoverJobs } from './services/jobs.ts';
+import { startServerHealth } from './services/servers.ts';
+import { startAutoUpdates } from './services/updates.ts';
 import domainRoutes from './routes/domains.ts';
 import siteRoutes from './routes/sites.ts';
 import webhookRoutes from './routes/webhooks.ts';
@@ -16,6 +19,9 @@ import proxyRoutes from './routes/proxy.ts';
 import mailRoutes from './routes/mail.ts';
 import databaseRoutes from './routes/databases.ts';
 import systemRoutes from './routes/system.ts';
+import serverRoutes from './routes/servers.ts';
+import storageRoutes from './routes/storage.ts';
+import adminRoutes from './routes/admin.ts';
 
 const app = Fastify({
   logger: { level: config.dev ? 'info' : 'warn' },
@@ -39,6 +45,9 @@ await app.register(webhookRoutes);
 await app.register(proxyRoutes);
 await app.register(mailRoutes);
 await app.register(databaseRoutes);
+await app.register(serverRoutes);
+await app.register(storageRoutes);
+await app.register(adminRoutes);
 
 // Single-page app.
 if (existsSync(config.webDist)) {
@@ -62,6 +71,9 @@ app.addHook('onSend', async (_req, reply) => {
 
 await ensureAdminUser();
 recoverInterruptedDeployments();
+recoverJobs();
+startServerHealth();
+startAutoUpdates();
 startAnalytics();
 startCertSync();
 

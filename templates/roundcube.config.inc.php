@@ -12,7 +12,12 @@ $config['smtp_conn_options'] = ['ssl' => ['verify_peer' => false, 'verify_peer_n
 $config['product_name'] = 'Webmail';
 $config['support_url'] = '';
 $config['des_key'] = '{{ROUNDCUBE_KEY}}';
-$config['plugins'] = ['archive', 'zipdownload'];
+// Filters, vacation auto-replies and forwarding through Stalwart's ManageSieve (STARTTLS).
+$config['plugins'] = ['archive', 'zipdownload', 'managesieve', 'markasjunk', 'newmail_notifier'];
+$config['managesieve_host'] = 'tls://127.0.0.1:4190';
+$config['managesieve_conn_options'] = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]];
+$config['managesieve_vacation'] = 1;
+$config['managesieve_forward'] = 1;
 $config['skin'] = 'elastic';
 $config['language'] = 'es_ES';
 $config['enable_installer'] = false;

@@ -9,8 +9,8 @@ ENV_FILE=/etc/hostpanel/hostpanel.env
 if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; D=$'\e[2m'; N=$'\e[0m'; else B='' G='' R='' D='' N=''; fi
 
 need_root() { if [[ $EUID -ne 0 ]]; then echo "Este comando necesita root: sudo hostpanel $*" >&2; exit 1; fi; }
-php_service() { local v; v=$(grep -E '^HP_PHP_VERSION=' "$ENV_FILE" 2>/dev/null | cut -d= -f2); echo "php${v:-8.3}-fpm"; }
-services() { echo hostpanel caddy pdns stalwart mariadb "$(php_service)"; }
+php_services() { ls /usr/sbin/php-fpm* 2>/dev/null | sed 's#.*php-fpm#php#; s#$#-fpm#' | tr '\n' ' '; }
+services() { echo hostpanel caddy pdns stalwart mariadb fail2ban $(php_services); }
 cli() { (cd "$API_DIR" && node --disable-warning=ExperimentalWarning src/cli.ts "$@"); }
 
 usage() {
@@ -23,7 +23,9 @@ ${B}Uso:${N} hostpanel <comando>
   reset-password [usuario] [contraseña]
                           Restablece la contraseña del panel (genera una si no se indica)
   sync-proxy              Regenera y aplica la configuración de Caddy
-  update                  Actualiza HostPanel a la última versión (conserva los datos)
+  update [componente]     Actualiza todo, o solo: panel, caddy, stalwart, roundcube, node, system
+  disable-2fa [usuario]   Quita la verificación en dos pasos (si perdiste el móvil)
+  panel-access-reset      Quita la restricción de IPs del panel (si te quedaste fuera)
   uninstall [--purge]     Desinstala (con --purge borra también todos los datos)
   info                    Muestra URLs y configuración principal
 EOF
@@ -65,11 +67,15 @@ case $cmd in
     ;;
   update)
     need_root update
-    if [[ ! -d $APP_DIR/.git ]]; then
-      echo "Esta instalación no se hizo desde git. Vuelve a ejecutar install.sh desde la nueva versión." >&2
-      exit 1
-    fi
-    git -C "$APP_DIR" fetch --depth 1 origin && git -C "$APP_DIR" reset --hard FETCH_HEAD && bash "$APP_DIR/install.sh" --update
+    bash "$APP_DIR/scripts/hp-update" "${1:-all}"
+    ;;
+  disable-2fa)
+    need_root disable-2fa
+    cli disable-2fa "${1:-admin}"
+    ;;
+  panel-access-reset)
+    need_root panel-access-reset
+    cli panel-access-reset
     ;;
   uninstall)
     need_root uninstall

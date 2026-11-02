@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { Code2, FileCode, Hexagon, Plus, Trash2 } from 'lucide-react';
-import type { Site, SiteType } from '../lib/api';
-import { Button, Card, Field, Input, Toggle, cx } from './ui';
+import { useQuery } from '@tanstack/react-query';
+import { Code2, FileCode, Hexagon, Plus, Server, Trash2 } from 'lucide-react';
+import { api, type ServerNode, type Site, type SiteType } from '../lib/api';
+import { Badge, Button, Card, Field, Input, Select, Toggle, cx } from './ui';
 
 export interface SiteFormValue {
   name: string;
@@ -18,6 +19,9 @@ export interface SiteFormValue {
   env: Record<string, string>;
   memory_mb: number;
   auto_deploy: boolean;
+  php_version: string;
+  server_ids: number[];
+  lb_policy: string;
 }
 
 export function siteToForm(s: Site): SiteFormValue {
@@ -35,7 +39,91 @@ export function siteToForm(s: Site): SiteFormValue {
     env: s.env,
     memory_mb: s.memory_mb,
     auto_deploy: s.auto_deploy,
+    php_version: s.php_version,
+    server_ids: s.server_ids,
+    lb_policy: s.lb_policy,
   };
+}
+
+const lbPolicies = [
+  { id: 'round_robin', label: 'Por turnos', desc: 'Reparte las peticiones por igual.' },
+  { id: 'least_conn', label: 'Menos conexiones', desc: 'Envía al servidor menos ocupado.' },
+  { id: 'ip_hash', label: 'Por IP del visitante', desc: 'Cada visitante va siempre al mismo servidor (sesiones).' },
+  { id: 'first', label: 'Principal y respaldo', desc: 'Todo al primero; los demás solo si cae.' },
+];
+
+/** Where the site runs: this server and/or remote VPS, plus PHP version and balancing. */
+function Placement({ value, set }: { value: SiteFormValue; set: <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => void }) {
+  const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.get<{ local: ServerNode; servers: ServerNode[] }>('/api/servers') });
+  const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean }[] }>('/api/php'), enabled: value.type === 'php' });
+  const all = servers.data ? [servers.data.local, ...servers.data.servers] : [];
+  const toggle = (id: number) => {
+    const has = value.server_ids.includes(id);
+    const next = has ? value.server_ids.filter((x) => x !== id) : [...value.server_ids, id];
+    if (next.length) set('server_ids', next);
+  };
+  return (
+    <Card title="Servidores y rendimiento">
+      <div className="space-y-4">
+        <div>
+          <div className="mb-1.5 text-[13px] font-medium">Dónde se ejecuta</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {all.map((s) => {
+              const checked = value.server_ids.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => toggle(s.id)}
+                  className={cx('flex items-center gap-3 rounded-md border p-3 text-left transition-colors', checked ? 'border-accent bg-accent-soft' : 'border-border hover:bg-surface-2')}
+                >
+                  <span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-accent bg-accent text-accent-fg' : 'border-border')}>
+                    {checked && <svg viewBox="0 0 12 12" className="size-3" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2.5 6.5l2.5 2.5 4.5-5" /></svg>}
+                  </span>
+                  <Server className={cx('size-4 shrink-0', checked ? 'text-accent' : 'text-muted')} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{s.name}</span>
+                    <span className="block truncate font-mono text-xs text-muted">{s.host}</span>
+                  </span>
+                  {s.status !== 'online' && <Badge tone="danger">Sin conexión</Badge>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-xs text-muted">
+            {servers.data && !servers.data.servers.length
+              ? 'Añade VPS en Servidores para desplegar fuera de este servidor o repartir la carga.'
+              : 'El código se compila aquí y se copia a cada servidor elegido. SSL, WAF y analítica siguen en este servidor.'}
+          </p>
+        </div>
+        {value.server_ids.length > 1 && (
+          <Field label="Balanceo de carga" hint="Los servidores que no responden se retiran automáticamente y vuelven al recuperarse.">
+            <Select value={value.lb_policy} onChange={(e) => set('lb_policy', e.target.value)}>
+              {lbPolicies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label} — {p.desc}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {value.type === 'php' && (
+          <Field label="Versión de PHP" hint="Instala más versiones en Sistema → PHP. En los VPS se instala sola si falta.">
+            <Select value={value.php_version} onChange={(e) => set('php_version', e.target.value)}>
+              <option value="">Por defecto del servidor{php.data ? ` (PHP ${php.data.default})` : ''}</option>
+              {php.data?.versions
+                .filter((v) => v.installed)
+                .map((v) => (
+                  <option key={v.version} value={v.version}>
+                    PHP {v.version}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 const typeOptions: { id: SiteType; label: string; desc: string; icon: ReactNode }[] = [
@@ -204,6 +292,8 @@ export function SiteForm({ value, onChange, editing, hasToken }: { value: SiteFo
           </div>
         )}
       </Card>
+
+      <Placement value={value} set={set} />
 
       <Card title="Variables de entorno">
         <p className="mb-3 text-[13px] text-muted">Disponibles durante el build y en ejecución. Se guardan en un archivo que solo puede leer el usuario del sitio.</p>

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
-import { ArrowLeftRight, Database, Globe, Mail, Rocket, ShieldAlert } from 'lucide-react';
+import { ArrowUpCircle, Database, Globe, Mail, Package, Rocket, Server, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { api, type TrafficPoint } from '../lib/api';
 import { bytes, compact, duration, timeAgo } from '../lib/format';
@@ -11,7 +11,7 @@ interface DashboardData {
   system: { hostname: string; uptime: number; load: number[]; cpus: number; memory: { total: number; free: number }; disk: { total: number; free: number }; serverIp: string };
   services: { name: string; active: boolean; state: string }[];
   caddy: { lastError: string; lastSync: number };
-  counts: { domains: number; sites: number; proxies: number; databases: number; mailDomains: number };
+  counts: { domains: number; sites: number; proxies: number; databases: number; mailDomains: number; buckets: number; servers: number; serversOnline: number };
   traffic24h: { requests: number; bytes: number; blocked: number };
   series: TrafficPoint[];
   recentDeployments: { id: number; site_id: number; site_name: string; status: string; trigger: string; commit_message: string; created_at: string }[];
@@ -34,20 +34,29 @@ function Meter({ label, used, total, detail }: { label: string; used: number; to
   );
 }
 
-function Stat({ to, icon, label, value }: { to: string; icon: ReactNode; label: string; value: ReactNode }) {
+function Stat({ to, icon, label, value, sub }: { to: string; icon: ReactNode; label: string; value: ReactNode; sub?: ReactNode }) {
   return (
     <Link to={to} className="group rounded-lg border border-border bg-surface p-4 transition-colors hover:border-accent/50">
       <div className="flex items-center gap-2 text-[13px] text-muted">
-        {icon}
+        <span className="transition-colors group-hover:text-accent">{icon}</span>
         {label}
       </div>
-      <div className="tabular mt-2 text-2xl font-semibold">{value}</div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="tabular text-2xl font-semibold">{value}</span>
+        {sub && <span className="text-xs text-muted">{sub}</span>}
+      </div>
     </Link>
   );
 }
 
 export default function Dashboard() {
   const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api.get<DashboardData>('/api/dashboard'), refetchInterval: 15000 });
+  const updates = useQuery({
+    queryKey: ['updates'],
+    queryFn: () => api.get<{ components: { name: string; updateAvailable: boolean }[] }>('/api/updates'),
+    staleTime: 3600_000,
+  });
+  const pending = updates.data?.components.filter((c) => c.updateAvailable) ?? [];
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const d = q.data!;
@@ -81,12 +90,29 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+      {pending.length > 0 && (
+        <Link to="/system" className="mb-4 flex items-center gap-3 rounded-md border border-accent/30 bg-accent-soft px-3 py-2 text-[13px] transition-colors hover:border-accent/60">
+          <ArrowUpCircle className="size-4 text-accent" />
+          <span>
+            <span className="font-medium">Actualizaciones disponibles:</span> {pending.map((c) => c.name).join(', ')}
+          </span>
+          <span className="ml-auto font-medium text-accent">Ver →</span>
+        </Link>
+      )}
+
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat to="/sites" icon={<Rocket className="size-4" />} label="Sitios" value={d.counts.sites} />
         <Stat to="/domains" icon={<Globe className="size-4" />} label="Dominios" value={d.counts.domains} />
-        <Stat to="/mail" icon={<Mail className="size-4" />} label="Dominios con correo" value={d.counts.mailDomains} />
+        <Stat to="/mail" icon={<Mail className="size-4" />} label="Con correo" value={d.counts.mailDomains} />
         <Stat to="/databases" icon={<Database className="size-4" />} label="Bases de datos" value={d.counts.databases} />
-        <Stat to="/proxy" icon={<ArrowLeftRight className="size-4" />} label="Rutas de proxy" value={d.counts.proxies} />
+        <Stat to="/storage" icon={<Package className="size-4" />} label="Buckets" value={d.counts.buckets} />
+        <Stat
+          to="/servers"
+          icon={<Server className="size-4" />}
+          label="Servidores"
+          value={d.counts.servers + 1}
+          sub={d.counts.servers ? `${d.counts.serversOnline + 1} en línea` : 'solo este'}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

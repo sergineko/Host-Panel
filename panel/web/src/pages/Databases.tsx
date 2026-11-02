@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, KeyRound, Plus, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -41,14 +42,18 @@ export default function Databases() {
   });
   const reset = useMutation({
     mutationFn: (id: number) => api.post<Credentials>(`/api/databases/${id}/password`),
-    onSuccess: setCreds,
+    onSuccess: (c) => {
+      setCreds(c);
+      qc.invalidateQueries({ queryKey: ['databases'] });
+      qc.invalidateQueries({ queryKey: ['database'] });
+    },
   });
 
   return (
     <>
       <PageHeader
         title="Bases de datos"
-        description="MariaDB. Cada base de datos tiene su propio usuario con acceso solo a ella."
+        description="MariaDB con consola SQL, API HTTP al estilo D1, copias y acceso remoto. Cada base de datos tiene su propio usuario."
         actions={
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setOpen(true)}>
             Nueva base de datos
@@ -66,7 +71,11 @@ export default function Databases() {
           <Table head={['Base de datos', 'Usuario', 'Tamaño', 'Creada', '']}>
             {q.data!.map((d) => (
               <tr key={d.id} className="group">
-                <Td className="font-mono font-medium">{d.name}</Td>
+                <Td className="font-mono font-medium">
+                  <Link to={`/databases/${d.id}`} className="hover:text-accent">
+                    {d.name}
+                  </Link>
+                </Td>
                 <Td className="font-mono text-muted">{d.username}</Td>
                 <Td className="tabular">{bytes(d.size)}</Td>
                 <Td className="text-muted">{timeAgo(d.created_at)}</Td>

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, lazy, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -9,17 +9,24 @@ import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import Domains from './pages/Domains';
-import DomainDetail from './pages/DomainDetail';
-import Sites from './pages/Sites';
-import SiteDetail from './pages/SiteDetail';
-import SiteNew from './pages/SiteNew';
-import Proxy from './pages/Proxy';
-import Security from './pages/Security';
-import Mail from './pages/Mail';
-import Databases from './pages/Databases';
-import Analytics from './pages/Analytics';
-import SettingsPage from './pages/Settings';
+
+// Every other page is a separate chunk, loaded on first visit (smaller initial download).
+const Domains = lazy(() => import('./pages/Domains'));
+const DomainDetail = lazy(() => import('./pages/DomainDetail'));
+const Sites = lazy(() => import('./pages/Sites'));
+const SiteDetail = lazy(() => import('./pages/SiteDetail'));
+const SiteNew = lazy(() => import('./pages/SiteNew'));
+const Proxy = lazy(() => import('./pages/Proxy'));
+const Security = lazy(() => import('./pages/Security'));
+const Mail = lazy(() => import('./pages/Mail'));
+const Databases = lazy(() => import('./pages/Databases'));
+const DatabaseDetail = lazy(() => import('./pages/DatabaseDetail'));
+const Storage = lazy(() => import('./pages/Storage'));
+const BucketDetail = lazy(() => import('./pages/BucketDetail'));
+const Servers = lazy(() => import('./pages/Servers'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const SystemPage = lazy(() => import('./pages/System'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,7 +39,7 @@ const queryClient = new QueryClient({
 
 function Protected() {
   const navigate = useNavigate();
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<{ username: string }>('/api/auth/me') });
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<{ username: string; totp: boolean }>('/api/auth/me') });
   useEffect(() => {
     const onUnauthorized = () => navigate('/login');
     window.addEventListener('hp:unauthorized', onUnauthorized);
@@ -71,7 +78,12 @@ createRoot(document.getElementById('root')!).render(
             <Route path="security" element={<Security />} />
             <Route path="mail" element={<Mail />} />
             <Route path="databases" element={<Databases />} />
+            <Route path="databases/:id" element={<DatabaseDetail />} />
+            <Route path="storage" element={<Storage />} />
+            <Route path="storage/:id" element={<BucketDetail />} />
+            <Route path="servers" element={<Servers />} />
             <Route path="analytics" element={<Analytics />} />
+            <Route path="system" element={<SystemPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

@@ -25,8 +25,6 @@ q()    { "$@" >/dev/null 2>&1; }
 
 if [[ $EUID -ne 0 ]]; then echo "Ejecuta como root (sudo)." >&2; exit 1; fi
 
-PHP_VERSION=$(grep -E '^HP_PHP_VERSION=' /etc/hostpanel/hostpanel.env 2>/dev/null | cut -d= -f2 || true)
-PHP_VERSION=${PHP_VERSION:-$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || true)}
 
 echo
 printf '%sDesinstalar HostPanel%s\n\n' "$B" "$N"
@@ -67,15 +65,27 @@ done
 q systemctl daemon-reload
 ok "Servicios hostpanel, caddy y stalwart eliminados"
 
-if [[ -n $PHP_VERSION && -d /etc/php/$PHP_VERSION/fpm/pool.d ]]; then
-  rm -f /etc/php/"$PHP_VERSION"/fpm/pool.d/hp-*.conf
-  q systemctl reload "php${PHP_VERSION}-fpm"
-  ok "Pools PHP-FPM de HostPanel eliminados"
-fi
+# Every PHP version installed from the panel.
+for pooldir in /etc/php/*/fpm/pool.d; do
+  [[ -d $pooldir ]] || continue
+  version=$(echo "$pooldir" | cut -d/ -f4)
+  rm -f "$pooldir"/hp-*.conf
+  # FPM needs at least one pool: restore the distro default if it was removed.
+  if ! ls "$pooldir"/*.conf >/dev/null 2>&1; then
+    printf '[www]\nuser = www-data\ngroup = www-data\nlisten = /run/php/php%s-fpm.sock\nlisten.owner = www-data\nlisten.group = www-data\npm = ondemand\npm.max_children = 5\n' "$version" >"$pooldir/www.conf"
+  fi
+  rm -f "/etc/php/$version/fpm/conf.d/99-hostpanel.ini" "/etc/php/$version/cli/conf.d/99-hostpanel.ini"
+  q systemctl restart "php${version}-fpm"
+done
+ok "Pools PHP-FPM de HostPanel eliminados"
 
 rm -rf /opt/hostpanel /usr/local/bin/caddy /etc/caddy /var/www/roundcube /opt/stalwart/bin /opt/stalwart/etc
 rm -f /usr/local/bin/hostpanel
-ok "Programas eliminados"
+rm -f /etc/sysctl.d/90-hostpanel.conf /etc/fail2ban/jail.d/hostpanel.conf /etc/mysql/mariadb.conf.d/90-hostpanel.cnf /etc/mysql/mariadb.conf.d/91-hostpanel-remote.cnf
+q sysctl --system
+q systemctl restart fail2ban
+q systemctl restart mariadb
+ok "Programas y ajustes del sistema eliminados"
 
 # --- system DNS resolver back to default ---------------------------------------------
 if [[ -f /etc/systemd/resolved.conf.d/hostpanel.conf ]]; then
@@ -89,6 +99,12 @@ fi
 # --- firewall ------------------------------------------------------------------------
 if command -v ufw >/dev/null; then
   for rule in 80/tcp 443/tcp 443/udp 2087/tcp 53/tcp 53/udp 25/tcp 465/tcp 587/tcp 993/tcp 4190/tcp; do q ufw delete allow "$rule"; done
+  # Remote database access rules (… port 3306) added from the panel.
+  while ufw status numbered 2>/dev/null | grep -q ' 3306/tcp'; do
+    n=$(ufw status numbered | grep ' 3306/tcp' | head -1 | sed -E 's/^\[ *([0-9]+)\].*/\1/')
+    [[ -n $n ]] || break
+    q ufw --force delete "$n"
+  done
   ok "Reglas de cortafuegos de HostPanel eliminadas (SSH se mantiene)"
 fi
 
@@ -107,8 +123,9 @@ if [[ $PURGE == 1 ]]; then
 
   export DEBIAN_FRONTEND=noninteractive
   q systemctl disable --now pdns mariadb
-  q apt-get purge -y 'pdns-*' 'mariadb-*' 'php*' composer nodejs
+  q apt-get purge -y 'pdns-*' 'mariadb-*' 'php*' composer nodejs fail2ban
   q apt-get autoremove -y
+  rm -f /etc/apt/sources.list.d/sury-php.list /usr/share/keyrings/sury-php.gpg /etc/apt/sources.list.d/ondrej-*
   rm -rf /var/lib/powerdns /etc/powerdns /var/lib/mysql /etc/mysql
   ok "Paquetes desinstalados (PowerDNS, MariaDB, PHP, Node.js)"
 else

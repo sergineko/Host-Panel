@@ -176,10 +176,13 @@ function SettingsTab({ site }: { site: Site }) {
   const qc = useQueryClient();
   const [value, setValue] = useState<SiteFormValue>(() => siteToForm(site));
   const save = useMutation({
-    mutationFn: () => api.put<Site>(`/api/sites/${site.id}`, value),
-    onSuccess: () => {
-      toast.success('Configuración guardada. Despliega de nuevo para aplicar cambios de build.');
+    mutationFn: () => api.put<Site & { deployment_id?: number }>(`/api/sites/${site.id}`, value),
+    onSuccess: (r) => {
+      if (r.deployment_id) toast.success('Configuración guardada. Se está republicando en los servidores elegidos.');
+      else toast.success('Configuración guardada. Despliega de nuevo para aplicar cambios de build.');
       qc.invalidateQueries({ queryKey: ['site', site.id] });
+      qc.invalidateQueries({ queryKey: ['deployments', site.id] });
+      qc.invalidateQueries({ queryKey: ['servers'] });
     },
   });
   return (

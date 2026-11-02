@@ -24,7 +24,8 @@ export default async function mailRoutes(app: FastifyInstance) {
       mailboxes: domains.length ? await mail.listMailboxes(domain) : [],
       server: {
         hostname: config.mailHostname,
-        webmail: config.mailHostname ? `https://${config.mailHostname}` : '',
+        // Each mail domain also gets its own webmail.<domain> address.
+        webmail: !config.mailHostname ? '' : domain && domains.some((d) => d.name === domain) ? `https://webmail.${domain}` : `https://${config.mailHostname}`,
         imap: { host: config.mailHostname, port: 993, security: 'SSL/TLS' },
         smtp: { host: config.mailHostname, port: 465, security: 'SSL/TLS', alt: 587 },
       },

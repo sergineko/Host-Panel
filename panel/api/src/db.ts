@@ -138,6 +138,62 @@ const migrations: string[] = [
     PRIMARY KEY (host, hour)
   );
   `,
+  `
+  ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT '';
+  ALTER TABLE sites ADD COLUMN php_version TEXT NOT NULL DEFAULT '';
+  ALTER TABLE sites ADD COLUMN server_ids TEXT NOT NULL DEFAULT '[0]';
+  ALTER TABLE sites ADD COLUMN lb_policy TEXT NOT NULL DEFAULT 'round_robin';
+  ALTER TABLE databases ADD COLUMN password_enc TEXT NOT NULL DEFAULT '';
+  ALTER TABLE databases ADD COLUMN remote_hosts TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE security ADD COLUMN block_sensitive INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE security ADD COLUMN hotlink INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE security ADD COLUMN max_body_mb INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE security ADD COLUMN cache_static INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE security ADD COLUMN cache_ttl INTEGER NOT NULL DEFAULT 604800;
+  CREATE TABLE servers (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL UNIQUE,
+    ssh_port INTEGER NOT NULL DEFAULT 22,
+    ssh_user TEXT NOT NULL DEFAULT 'root',
+    status TEXT NOT NULL DEFAULT 'pending',
+    info TEXT NOT NULL DEFAULT '{}',
+    last_error TEXT NOT NULL DEFAULT '',
+    last_check TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE jobs (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    log TEXT NOT NULL DEFAULT '',
+    log_file TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+  );
+  CREATE TABLE buckets (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    public INTEGER NOT NULL DEFAULT 0,
+    hostname TEXT NOT NULL DEFAULT '',
+    cors_origins TEXT NOT NULL DEFAULT '',
+    cache_ttl INTEGER NOT NULL DEFAULT 86400,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE api_tokens (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    prefix TEXT NOT NULL,
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('bucket','database')),
+    scope_id INTEGER NOT NULL,
+    can_write INTEGER NOT NULL DEFAULT 0,
+    last_used TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -207,6 +263,9 @@ export interface SiteRow {
   status: string;
   active_slot: number;
   active_release: string;
+  php_version: string;
+  server_ids: string;
+  lb_policy: string;
   created_at: string;
 }
 export interface DeploymentRow {
@@ -253,6 +312,11 @@ export interface SecurityRow {
   security_headers: number;
   hsts: number;
   compression: number;
+  block_sensitive: number;
+  hotlink: number;
+  max_body_mb: number;
+  cache_static: number;
+  cache_ttl: number;
 }
 export interface IpRuleRow {
   id: number;
@@ -260,4 +324,56 @@ export interface IpRuleRow {
   cidr: string;
   action: 'allow' | 'block';
   note: string;
+}
+export interface ServerRow {
+  id: number;
+  name: string;
+  host: string;
+  ssh_port: number;
+  ssh_user: string;
+  status: 'pending' | 'online' | 'offline';
+  info: string;
+  last_error: string;
+  last_check: string | null;
+  created_at: string;
+}
+export interface JobRow {
+  id: number;
+  kind: string;
+  title: string;
+  status: 'running' | 'success' | 'failed';
+  log: string;
+  log_file: string;
+  created_by: string;
+  created_at: string;
+  finished_at: string | null;
+}
+export interface BucketRow {
+  id: number;
+  name: string;
+  public: number;
+  hostname: string;
+  cors_origins: string;
+  cache_ttl: number;
+  created_at: string;
+}
+export interface DatabaseRow {
+  id: number;
+  name: string;
+  username: string;
+  note: string;
+  password_enc: string;
+  remote_hosts: string;
+  created_at: string;
+}
+export interface ApiTokenRow {
+  id: number;
+  name: string;
+  token_hash: string;
+  prefix: string;
+  scope_type: 'bucket' | 'database';
+  scope_id: number;
+  can_write: number;
+  last_used: string | null;
+  created_at: string;
 }

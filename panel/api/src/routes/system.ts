@@ -6,6 +6,7 @@ import { parse } from '../lib/validate.ts';
 import { recentRequests, trafficSeries } from '../services/analytics.ts';
 import { caddyState } from '../services/caddy.ts';
 import { servicesStatus, systemInfo } from '../services/system.ts';
+import { defaultPhpVersion } from '../services/php.ts';
 
 export default async function systemRoutes(app: FastifyInstance) {
   app.get('/api/health', async () => ({ ok: true }));
@@ -22,6 +23,9 @@ export default async function systemRoutes(app: FastifyInstance) {
         sites: count('sites'),
         proxies: count('proxy_routes'),
         databases: count('databases'),
+        buckets: count('buckets'),
+        servers: count('servers'),
+        serversOnline: get<{ n: number }>("SELECT COUNT(*) n FROM servers WHERE status = 'online'")!.n,
         mailDomains: get<{ n: number }>('SELECT COUNT(*) n FROM domains WHERE mail_enabled = 1')!.n,
       },
       traffic24h: series.reduce(
@@ -57,6 +61,6 @@ export default async function systemRoutes(app: FastifyInstance) {
     nameservers: [config.ns1, config.ns2],
     mailHostname: config.mailHostname,
     adminEmail: config.adminEmail,
-    phpVersion: config.phpVersion,
+    phpVersion: defaultPhpVersion(),
   }));
 }

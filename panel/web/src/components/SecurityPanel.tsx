@@ -5,13 +5,24 @@ import { Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import { api, type IpRule, type Security } from '../lib/api';
 import { Badge, Button, Card, ErrorBox, Field, Input, Select, Spinner, StickyActions, Table, Td, Toggle, cx } from './ui';
 
-type Form = Omit<Security, 'ip_rules' | 'block_bots' | 'under_attack' | 'security_headers' | 'hsts' | 'compression'> & {
-  block_bots: boolean;
-  under_attack: boolean;
-  security_headers: boolean;
-  hsts: boolean;
-  compression: boolean;
-};
+const FLAGS = ['block_bots', 'under_attack', 'security_headers', 'hsts', 'compression', 'block_sensitive', 'hotlink', 'cache_static'] as const;
+type Flag = (typeof FLAGS)[number];
+type Form = Omit<Security, 'ip_rules' | Flag> & Record<Flag, boolean>;
+
+function toForm(s: Security): Form {
+  const { ip_rules: _rules, ...rest } = s;
+  const form = { ...rest } as unknown as Form;
+  for (const f of FLAGS) form[f] = !!s[f];
+  return form;
+}
+
+const cacheOptions = [
+  { value: 3600, label: '1 hora' },
+  { value: 86400, label: '1 día' },
+  { value: 604800, label: '1 semana' },
+  { value: 2592000, label: '1 mes' },
+  { value: 31536000, label: '1 año (archivos con hash)' },
+];
 
 const wafModes = [
   { id: 'off', label: 'Desactivado', desc: 'Sin inspección de peticiones.' },
@@ -97,18 +108,7 @@ export function SecurityPanel({ domainId }: { domainId: number }) {
   const [form, setForm] = useState<Form | null>(null);
 
   useEffect(() => {
-    if (!q.data) return;
-    const s = q.data;
-    setForm({
-      waf_mode: s.waf_mode,
-      paranoia: s.paranoia,
-      rate_limit_rpm: s.rate_limit_rpm,
-      block_bots: !!s.block_bots,
-      under_attack: !!s.under_attack,
-      security_headers: !!s.security_headers,
-      hsts: !!s.hsts,
-      compression: !!s.compression,
-    });
+    if (q.data) setForm(toForm(q.data));
   }, [q.data]);
 
   const save = useMutation({
@@ -123,16 +123,8 @@ export function SecurityPanel({ domainId }: { domainId: number }) {
   if (q.isLoading || !form) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm({ ...form, [k]: v });
-  const dirty =
-    q.data &&
-    (form.waf_mode !== q.data.waf_mode ||
-      form.paranoia !== q.data.paranoia ||
-      form.rate_limit_rpm !== q.data.rate_limit_rpm ||
-      form.block_bots !== !!q.data.block_bots ||
-      form.under_attack !== !!q.data.under_attack ||
-      form.security_headers !== !!q.data.security_headers ||
-      form.hsts !== !!q.data.hsts ||
-      form.compression !== !!q.data.compression);
+  const original = q.data ? toForm(q.data) : null;
+  const dirty = !!original && (Object.keys(form) as (keyof Form)[]).some((k) => form[k] !== original[k]);
 
   return (
     <div className="space-y-4">
@@ -197,12 +189,40 @@ export function SecurityPanel({ domainId }: { domainId: number }) {
               <div className="font-medium">Límite de peticiones</div>
               <div className="text-[13px] text-muted">Peticiones por minuto y por IP antes de responder 429. 0 = sin límite.</div>
             </div>
-            <Input type="number" min={0} className="w-32" value={form.rate_limit_rpm} onChange={(e) => set('rate_limit_rpm', Number(e.target.value))} />
+            <Input type="number" min={0} className="!w-32" value={form.rate_limit_rpm} onChange={(e) => set('rate_limit_rpm', Number(e.target.value))} />
           </div>
           <Toggle checked={form.block_bots} onChange={(v) => set('block_bots', v)} label="Bloquear bots maliciosos" description="Escáneres de vulnerabilidades (sqlmap, nikto, wpscan…) y crawlers agresivos." />
+          <Toggle checked={form.block_sensitive} onChange={(v) => set('block_sensitive', v)} label="Proteger archivos sensibles" description="Bloquea .git, .env, copias de seguridad (.sql, .bak), composer.json y similares aunque estén publicados por error." />
+          <Toggle checked={form.hotlink} onChange={(v) => set('hotlink', v)} label="Protección contra hotlinking" description="Impide que otras webs incrusten tus imágenes y consuman tu ancho de banda." />
+          <div className="flex flex-wrap items-center justify-between gap-4 py-3">
+            <div>
+              <div className="font-medium">Tamaño máximo de subida</div>
+              <div className="text-[13px] text-muted">Rechaza peticiones con cuerpos mayores (MB). 0 = sin límite propio.</div>
+            </div>
+            <Input type="number" min={0} className="!w-32" value={form.max_body_mb} onChange={(e) => set('max_body_mb', Number(e.target.value))} />
+          </div>
           <Toggle checked={form.security_headers} onChange={(v) => set('security_headers', v)} label="Cabeceras de seguridad" description="X-Frame-Options, X-Content-Type-Options, Referrer-Policy. Oculta la cabecera Server." />
           <Toggle checked={form.hsts} onChange={(v) => set('hsts', v)} label="HSTS" description="Obliga a los navegadores a usar siempre HTTPS durante un año (incluye subdominios)." />
-          <Toggle checked={form.compression} onChange={(v) => set('compression', v)} label="Compresión zstd / gzip" description="Reduce el tamaño de las respuestas." />
+        </div>
+      </Card>
+
+      <Card title="Rendimiento">
+        <div className="divide-y divide-border">
+          <Toggle checked={form.compression} onChange={(v) => set('compression', v)} label="Compresión zstd / gzip" description="Reduce el tamaño de HTML, CSS, JS y JSON entre un 60 y un 80 %." />
+          <Toggle checked={form.cache_static} onChange={(v) => set('cache_static', v)} label="Caché de archivos estáticos" description="Indica al navegador que guarde imágenes, CSS, JS y fuentes. Solo si tu app no define su propia caché." />
+          {form.cache_static && (
+            <div className="flex flex-wrap items-center justify-between gap-4 py-3">
+              <div className="font-medium">Duración de la caché</div>
+              <Select className="!w-56" value={form.cache_ttl} onChange={(e) => set('cache_ttl', Number(e.target.value))}>
+                {cacheOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <div className="py-3 text-[13px] text-muted">HTTP/3 (QUIC), TLS 1.3 y OCSP stapling están activos siempre en todos los dominios.</div>
         </div>
       </Card>
 

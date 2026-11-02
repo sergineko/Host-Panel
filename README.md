@@ -8,7 +8,12 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Correo** para todos los dominios (Stalwart: SMTP, IMAP, DKIM, SPF, DMARC, antispam) + **webmail** (Roundcube)
 - **Proxy inverso gráfico** (Caddy): rutas, balanceo, redirecciones y **SSL automático**
 - **WAF** OWASP CRS (Coraza), rate limit, reglas de IP, bloqueo de bots y **modo "bajo ataque"**
-- **Bases de datos** MariaDB, **analítica** de tráfico en vivo, auditoría
+- **Bases de datos** MariaDB con consola SQL y **API HTTP estilo D1**, copias y acceso remoto
+- **Almacenamiento estilo R2**: buckets con dominio propio, CDN, CORS y API con tokens
+- **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
+- **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel
+- **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
+- **2FA**, sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 
 Detalles de arquitectura y hoja de ruta en [PLAN.md](PLAN.md).
 
@@ -54,8 +59,35 @@ sudo hostpanel uninstall --purge
 | `hostpanel logs [servicio]` | Logs en vivo (`hostpanel`, `caddy`, `pdns`, `stalwart`…) |
 | `hostpanel restart [servicio\|all]` | Reinicia servicios |
 | `hostpanel reset-password [usuario]` | Nueva contraseña del panel |
-| `hostpanel update` | Actualiza a la última versión conservando los datos |
+| `hostpanel update [componente]` | Actualiza todo, o solo `panel`, `caddy`, `stalwart`, `roundcube`, `node`, `system` |
+| `hostpanel disable-2fa [usuario]` | Quita la verificación en dos pasos (móvil perdido) |
+| `hostpanel panel-access-reset` | Quita la restricción de IPs del panel |
 | `hostpanel info` | URLs y configuración |
+
+También se actualiza desde el panel: **Sistema → Actualizaciones**.
+
+## Varios servidores y balanceo de carga
+
+1. **Servidores → Añadir servidor** muestra un comando; ejecútalo como root en un VPS limpio (Ubuntu 22.04/24.04 o Debian 12/13).
+   Instala Caddy, PHP y Node.js, autoriza la clave SSH del panel y abre el puerto 8443 solo para la IP del panel.
+2. Añade el VPS con su IP y pulsa **Comprobar**.
+3. En la configuración de cada sitio elige en qué servidores se ejecuta. El código se compila en el panel y se copia a
+   cada servidor; si eliges varios, el panel reparte el tráfico entre ellos y retira los que no responden.
+
+Para quitar el nodo de un VPS: `sudo bash node-install.sh --uninstall`.
+
+## Almacenamiento y bases de datos por API
+
+```bash
+# Subir un archivo a un bucket
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @foto.jpg https://panel.midominio.com/api/storage/v1/imagenes/foto.jpg
+
+# Consultar una base de datos (estilo D1)
+curl -X POST https://panel.midominio.com/api/d1/v1/tienda/query -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"sql":"SELECT * FROM productos WHERE precio < ?","params":[20]}'
+```
+
+Los tokens se crean en cada bucket o base de datos (pestaña **API**).
 
 ## Despliegue automático desde GitHub
 
@@ -84,7 +116,9 @@ Para trabajar en la interfaz con recarga en caliente: `cd panel/web && npm run d
 
 ```
 install.sh / uninstall.sh   Instalador y desinstalador
+node-install.sh             Prepara un VPS como nodo de despliegue
 scripts/hostpanel           CLI (se instala en /usr/local/bin)
+scripts/hp-update           Actualizador del panel y sus componentes
 templates/                  Configuración de PowerDNS, Stalwart, Roundcube y unidades systemd
 panel/api                   Backend: Node 24 + Fastify 5 + Zod + SQLite (TypeScript nativo)
 panel/web                   Frontend: React 19 + Vite + Tailwind 4 + TanStack Query

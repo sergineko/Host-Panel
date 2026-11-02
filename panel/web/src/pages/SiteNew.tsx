@@ -26,6 +26,9 @@ export default function SiteNew() {
     env: {},
     memory_mb: 512,
     auto_deploy: true,
+    php_version: '',
+    server_ids: [0],
+    lb_policy: 'round_robin',
   });
 
   const create = useMutation({

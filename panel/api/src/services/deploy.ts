@@ -1,31 +1,47 @@
 /**
  * Deployment pipeline. One queue per site (deploys of the same site never overlap).
  *
- *   clone → install → build → publish
+ *   clone → install → build (always on this server) → upload to remote nodes → publish
  *
  * Static/PHP: publish = atomically switch the `current` symlink to the new release.
- * Node: blue/green — start the new release on the idle slot, wait until it answers,
- *       route traffic to it, then stop the old slot. A failed deploy never takes the site down.
+ * Node: blue/green — start the new release on the idle slot (on every server of the
+ *       site), wait until it answers, route traffic to it, then stop the old slot.
+ * A failed deploy never takes the site down.
  */
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { connect } from 'node:net';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { config } from '../config.ts';
-import { get, run, all, type DeploymentRow, type SiteRow } from '../db.ts';
+import { all, get, run, type DeploymentRow, type ServerRow, type SiteRow } from '../db.ts';
 import { exec } from '../lib/exec.ts';
-import { syncCaddy } from './caddy.ts';
+import { siteContentRoutes, syncCaddy } from './caddy.ts';
+import { phpPoolDir, PHP_EXTENSIONS } from './php.ts';
+import {
+  buildNodeCaddyConfig,
+  LOCAL_SERVER_ID,
+  pushNodeCaddy,
+  remoteScript,
+  rsyncTo,
+  siteServerIds,
+  sq,
+  writeFileScript,
+} from './servers.ts';
 import {
   chownSite,
   ensureSiteUser,
+  envFileContent,
   nodePort,
   nodeUnit,
+  nodeUnitContent,
   prepareSiteDirs,
   reloadPhp,
   removeReleaseDir,
   restartUnit,
   runAsSite,
   sitePaths,
+  sitePhpPool,
+  siteUser,
   stopUnit,
   switchCurrent,
   unitLogs,
@@ -79,6 +95,112 @@ export function enqueueDeploy(siteId: number, trigger: string, opts: { rollbackR
   return id;
 }
 
+// --- remote nodes -----------------------------------------------------------------------
+
+function remoteServersOf(site: SiteRow): ServerRow[] {
+  const ids = siteServerIds(site).filter((id) => id !== LOCAL_SERVER_ID);
+  if (!ids.length) return [];
+  return all<ServerRow>(`SELECT * FROM servers WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
+}
+
+/** Creates the site user and folders on the node and uploads the release. */
+async function uploadToNode(server: ServerRow, site: SiteRow, release: string, releaseDir: string, log: (l: string) => void) {
+  const p = sitePaths(site.id);
+  const user = siteUser(site.id);
+  const env = JSON.parse(site.env) as Record<string, string>;
+  log(`⇡ ${server.name}: subiendo la release…`);
+  await remoteScript(
+    server,
+    `id -u ${user} >/dev/null 2>&1 || useradd --system --user-group --home-dir ${sq(p.home)} --shell /usr/sbin/nologin ${user}
+mkdir -p ${sq(p.releases)} ${sq(p.shared)} ${sq(p.home)} ${sq(p.tmp)}`,
+    { onLine: log },
+  );
+  await rsyncTo(server, releaseDir, join(p.releases, release), { onLine: log });
+  await remoteScript(
+    server,
+    `${writeFileScript(p.envFile, envFileContent(env), '0640')}
+chown -R ${user}:${user} ${sq(p.root)}
+chown root:${user} ${sq(p.envFile)}
+chmod 0750 ${sq(p.root)}
+setfacl -R -m u:caddy:rX ${sq(p.root)} && setfacl -R -d -m u:caddy:rX ${sq(p.root)}
+# keep the last ${KEEP_RELEASES} releases
+ls -1 ${sq(p.releases)} | sort -r | tail -n +${KEEP_RELEASES + 2} | while read -r old; do rm -rf ${sq(p.releases)}/"$old"; done`,
+    { onLine: log },
+  );
+}
+
+/** Static/PHP: points `current` at the release and (PHP) writes the pool. */
+async function activateFilesOnNode(server: ServerRow, site: SiteRow, publishDir: string, log: (l: string) => void) {
+  const p = sitePaths(site.id);
+  const target = relative(p.root, publishDir);
+  let script = `ln -sfn ${sq(target)} ${sq(`${p.current}.tmp`)} && mv -Tf ${sq(`${p.current}.tmp`)} ${sq(p.current)}`;
+  if (site.type === 'php') {
+    const pool = sitePhpPool(site);
+    const v = pool.version;
+    script += `
+if [ ! -x /usr/sbin/php-fpm${v} ]; then
+  echo "Instalando PHP ${v} en el nodo…"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PHP_EXTENSIONS.map((e) => `php${v}-${e}`).join(' ')} >/dev/null
+  rm -f ${phpPoolDir(v)}/www.conf
+  systemctl enable --now php${v}-fpm
+fi
+for other in /etc/php/*/fpm/pool.d/hp-${site.id}.conf; do
+  [ -e "$other" ] && [ "$other" != ${sq(pool.path)} ] && rm -f "$other" && systemctl reload "php$(echo "$other" | cut -d/ -f4)-fpm" || true
+done
+${writeFileScript(pool.path, pool.content)}
+systemctl reload php${v}-fpm || systemctl restart php${v}-fpm`;
+  }
+  log(`▶ ${server.name}: publicando`);
+  await remoteScript(server, script, { onLine: log });
+}
+
+/** Node: starts the release on a slot and waits until it listens. */
+async function startNodeAppOnNode(server: ServerRow, site: SiteRow, slot: number, workdir: string, start: string, log: (l: string) => void) {
+  const unit = nodeUnit(site.id, slot);
+  const port = nodePort(site.id, slot);
+  log(`▶ ${server.name}: arrancando en el slot ${slot} (puerto ${port})`);
+  await remoteScript(
+    server,
+    `${writeFileScript(`/etc/systemd/system/${unit}.service`, nodeUnitContent(site, slot, workdir, start))}
+systemctl daemon-reload
+systemctl enable ${unit} >/dev/null 2>&1
+systemctl restart ${unit}
+for i in $(seq 1 60); do
+  if (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null; then echo "La app responde"; exit 0; fi
+  sleep 1
+done
+echo "La app no respondió en 60 s:"; journalctl -u ${unit} -n 30 --no-pager -o cat || true
+systemctl disable --now ${unit} || true
+exit 1`,
+    { onLine: log, timeoutMs: 3 * 60_000 },
+  );
+}
+
+const stopNodeAppOnNode = (server: ServerRow, site: SiteRow, slot: number) =>
+  remoteScript(server, `systemctl disable --now ${nodeUnit(site.id, slot)} || true`).catch(() => {});
+
+/** Pushes the Caddy config of a node with every site it currently serves. */
+export async function syncNodeCaddy(server: ServerRow, log?: (l: string) => void) {
+  const sites = all<SiteRow>("SELECT * FROM sites WHERE active_release != ''").filter((s) => siteServerIds(s).includes(server.id));
+  await pushNodeCaddy(server, buildNodeCaddyConfig(server, sites, siteContentRoutes), log);
+}
+
+/** Removes everything a site left on a node (site moved away or deleted). */
+export async function removeSiteFromNode(server: ServerRow, siteId: number) {
+  const p = sitePaths(siteId);
+  await remoteScript(
+    server,
+    `for slot in 0 1; do systemctl disable --now hp-site-${siteId}-$slot 2>/dev/null || true; rm -f /etc/systemd/system/hp-site-${siteId}-$slot.service; done
+systemctl daemon-reload
+for pool in /etc/php/*/fpm/pool.d/hp-${siteId}.conf; do [ -e "$pool" ] && rm -f "$pool" && systemctl reload "php$(echo "$pool" | cut -d/ -f4)-fpm" || true; done
+rm -rf ${sq(p.root)}
+userdel ${siteUser(siteId)} 2>/dev/null || true`,
+  );
+  await syncNodeCaddy(server);
+}
+
+// --- pipeline ---------------------------------------------------------------------------
+
 async function runDeploy(deploymentId: number, rollbackRelease?: string) {
   const lines = liveLogs.get(deploymentId) ?? [];
   liveLogs.set(deploymentId, lines);
@@ -99,8 +221,12 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
     run("UPDATE sites SET status = 'deploying' WHERE id = ?", site.id);
     const p = sitePaths(site.id);
     const env = JSON.parse(site.env) as Record<string, string>;
+    const local = siteServerIds(site).includes(LOCAL_SERVER_ID);
+    const remotes = remoteServersOf(site);
 
     log(`▶ Despliegue #${deploymentId} de "${site.name}" (${site.type})`);
+    log(`  Servidores: ${[local ? 'este servidor' : null, ...remotes.map((r) => r.name)].filter(Boolean).join(', ')}`);
+    // The release is always built here, even when the site only runs on remote nodes.
     await ensureSiteUser(site.id);
     await prepareSiteDirs(site.id);
     await writeSiteEnv(site);
@@ -142,7 +268,7 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
           log(`✔ Commit ${sha.slice(0, 7)}: ${message}`);
         }
       } else {
-        log('Sin repositorio: se publica una carpeta vacía (sube los archivos por SFTP o conecta un repo).');
+        log('Sin repositorio: se publica una carpeta vacía (conecta un repo para desplegar código).');
         await exec('mkdir', ['-p', releaseDir]);
       }
       await chownSite(site.id, releaseDir);
@@ -171,41 +297,63 @@ async function runDeploy(deploymentId: number, rollbackRelease?: string) {
     const publishDir = site.output_dir ? join(releaseDir, site.output_dir) : releaseDir;
     if (!config.dev && !existsSync(publishDir)) throw new Error(`No existe el directorio de salida "${site.output_dir}"`);
 
-    // 4. Publish
+    // 4. Upload to remote nodes (before switching anything, so a failed upload changes nothing).
+    for (const server of remotes) await uploadToNode(server, site, release, releaseDir, log);
+
+    // 5. Publish
     if (site.type === 'node') {
       const slot = site.active_release ? 1 - site.active_slot : 0;
       const port = nodePort(site.id, slot);
       const start = site.start_command || 'npm start';
-      log(`▶ Arrancando en el slot ${slot} (puerto ${port}): ${start}`);
-      await writeNodeUnit(site, slot, publishDir, start);
-      await restartUnit(nodeUnit(site.id, slot));
-      const healthy = config.dev || (await waitForPort(port, 60_000));
-      if (!healthy) {
-        log('✖ La aplicación no respondió en 60 s. Últimas líneas del log:');
-        log(await unitLogs(nodeUnit(site.id, slot), 40));
-        await stopUnit(nodeUnit(site.id, slot));
-        throw new Error(`La app no escucha en el puerto ${port}. Asegúrate de usar process.env.PORT.`);
+      const startedOn: ServerRow[] = [];
+      try {
+        if (local) {
+          log(`▶ Este servidor: arrancando en el slot ${slot} (puerto ${port}): ${start}`);
+          await writeNodeUnit(site, slot, publishDir, start);
+          await restartUnit(nodeUnit(site.id, slot));
+          const healthy = config.dev || (await waitForPort(port, 60_000));
+          if (!healthy) {
+            log('✖ La aplicación no respondió en 60 s. Últimas líneas del log:');
+            log(await unitLogs(nodeUnit(site.id, slot), 40));
+            throw new Error(`La app no escucha en el puerto ${port}. Asegúrate de usar process.env.PORT.`);
+          }
+        }
+        for (const server of remotes) {
+          await startNodeAppOnNode(server, site, slot, publishDir, start, log);
+          startedOn.push(server);
+        }
+      } catch (err) {
+        // Roll back the half-started slot everywhere; the old version keeps serving.
+        if (local) await stopUnit(nodeUnit(site.id, slot));
+        for (const s of startedOn) await stopNodeAppOnNode(s, site, slot);
+        throw err;
       }
       log('✔ La nueva versión responde. Cambiando el tráfico…');
       run('UPDATE sites SET active_slot = ?, active_release = ? WHERE id = ?', slot, release, site.id);
+      for (const server of remotes) await syncNodeCaddy(server, log);
       await syncCaddy();
       if (site.active_release) {
         await new Promise((r) => setTimeout(r, 3000)); // let in-flight requests finish
-        await stopUnit(nodeUnit(site.id, 1 - slot));
+        if (local) await stopUnit(nodeUnit(site.id, 1 - slot));
+        for (const server of remotes) await stopNodeAppOnNode(server, site, 1 - slot);
         log(`Slot anterior (${1 - slot}) detenido.`);
       }
     } else {
-      if (site.type === 'php') {
-        await writePhpPool(site);
+      if (local) {
+        if (site.type === 'php') {
+          const versions = await writePhpPool(site);
+          await switchCurrent(site.id, publishDir);
+          await reloadPhp(versions);
+          log(`✔ PHP ${sitePhpPool(site).version} recargado (opcache limpio).`);
+        } else {
+          await switchCurrent(site.id, publishDir);
+        }
       }
-      await switchCurrent(site.id, publishDir);
+      for (const server of remotes) await activateFilesOnNode(server, site, publishDir, log);
       const firstRelease = !site.active_release;
       run('UPDATE sites SET active_release = ? WHERE id = ?', release, site.id);
-      if (site.type === 'php') {
-        await reloadPhp();
-        log('✔ PHP-FPM recargado (opcache limpio).');
-      }
-      if (firstRelease) await syncCaddy();
+      for (const server of remotes) await syncNodeCaddy(server, log);
+      if (firstRelease || remotes.length) await syncCaddy();
       log(`✔ Publicado: current → releases/${release}${site.output_dir ? `/${site.output_dir}` : ''}`);
     }
 
