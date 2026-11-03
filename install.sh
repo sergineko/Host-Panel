@@ -187,6 +187,7 @@ php2shell_fixed() {
 has_module() { local mods; mods=$(/usr/local/bin/caddy list-modules 2>/dev/null || true); grep -qx "$1" <<<"$mods"; }
 
 # --- arguments -----------------------------------------------------------------------
+ORIG_ARGS=("$@")
 while [[ $# -gt 0 ]]; do
   case $1 in
     --domain) DOMAIN=${2:-}; shift 2 ;;
@@ -203,7 +204,9 @@ printf '\n%s%s  HostPanel%s — instalación nativa (sin Docker)\n' "$O" "$B" "$
 # =====================================================================================
 step "Comprobando el sistema"
 if [[ $EUID -ne 0 ]]; then echo "Ejecuta el instalador como root (sudo)." >&2; exit 1; fi
-mkdir -p "$(dirname "$INSTALL_LOG")"; : >"$INSTALL_LOG"
+mkdir -p "$(dirname "$INSTALL_LOG")"
+# A fresh log, except when continuing with the downloaded installer (see "Código de HostPanel").
+if [[ ${HP_REEXEC:-0} != 1 ]]; then : >"$INSTALL_LOG"; fi
 check_os
 case "$(uname -m)" in
   x86_64) ARCH=amd64; STALWART_TRIPLE=x86_64-unknown-linux-gnu ;;
@@ -344,6 +347,14 @@ elif [[ -d $APP_DIR/.git ]]; then
 elif [[ ! -f $APP_DIR/panel/api/package.json ]]; then
   q git clone --depth 1 --branch "$HP_BRANCH" "$HP_REPO" "$APP_DIR" || die "No se pudo descargar $HP_REPO"
   ok "Descargado de $HP_REPO"
+fi
+# raw.githubusercontent.com can serve a copy of this script a few minutes old while git already
+# brought the latest code: continue with the installer that ships with the downloaded code, so
+# both always match. Steps 1-2 run again (they are quick and idempotent).
+if [[ ${HP_REEXEC:-0} != 1 && -f $APP_DIR/install.sh ]]   && [[ $(readlink -f "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true) != "$(readlink -f "$APP_DIR/install.sh")" ]]; then
+  ok "Se continúa con el instalador de la versión descargada"
+  trap - ERR
+  exec env HP_REEXEC=1 HP_KEEP_CODE=1 bash "$APP_DIR/install.sh" "${ORIG_ARGS[@]}"
 fi
 T=$APP_DIR/templates
 
