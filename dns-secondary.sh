@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# =====================================================================================
+#  HostPanel — DNS secundario (segundo nameserver en otra máquina)
+#
+#  El panel muestra este comando con sus datos en Servidores → DNS secundario:
+#    curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/dns-secondary.sh \
+#      | sudo bash -s -- --primary 203.0.113.10 --ns ns2.midominio.com
+#
+#  Instala solo PowerDNS como secundario: recibe por AXFR las zonas del panel (y las nuevas
+#  automáticamente, en cuanto el panel las anuncia con NOTIFY) y las sirve en el puerto 53.
+#  Solo acepta zonas del servidor principal. Si el principal cae, este sigue respondiendo.
+#
+#  Basta un VPS pequeño (512 MB) con Ubuntu 22.04+ o Debian 12+, en otro proveedor o centro
+#  de datos si es posible.
+# =====================================================================================
+set -Eeuo pipefail
+
+PRIMARY=''
+NS_NAME=''
+LOG=/var/log/hostpanel-dns-secondary.log
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --primary) PRIMARY=${2:-}; shift 2 ;;
+    --ns) NS_NAME=${2:-}; shift 2 ;;
+    *) echo "Opción desconocida: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; O=$'\e[38;5;208m'; N=$'\e[0m'; else B='' G='' Y='' R='' O='' N=''; fi
+step() { printf '\n%s▶%s %s%s%s\n' "$O" "$N" "$B" "$*" "$N"; }
+ok() { printf '  %s✔%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+die() { printf '\n%s✖ %s%s\n' "$R" "$*" "$N" >&2; tail -n 15 "$LOG" 2>/dev/null | sed 's/^/    /' >&2; exit 1; }
+trap 'die "Error en la línea $LINENO: $BASH_COMMAND"' ERR
+q() { "$@" >>"$LOG" 2>&1; }
+export DEBIAN_FRONTEND=noninteractive
+apt_install() { q apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
+
+# --- operating system ----------------------------------------------------------------
+# Any Ubuntu from 22.04 or Debian from 12, newer releases included. Sets CODENAME.
+check_os() {
+  [[ -r /etc/os-release ]] || die "Sistema operativo no soportado."
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  CODENAME=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}
+  local version=${VERSION_ID:-} major minor
+  major=${version%%.*} minor=${version#*.}
+  case ${ID:-} in
+    ubuntu)
+      [[ ${VERSION_ID:-} =~ ^[0-9]+\.[0-9]+$ ]] || die "No se pudo leer la versión de Ubuntu (${VERSION_ID:-?})."
+      (( major >= 22 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Ubuntu 22.04 o posterior."
+      # LTS = even year, April release (22.04, 24.04, 26.04…).
+      if (( major % 2 )) || [[ $minor != 04 ]]; then
+        warn "$PRETTY_NAME no es una versión LTS: funciona, pero para producción se recomienda una LTS."
+      fi
+      ;;
+    debian)
+      if [[ -z ${VERSION_ID:-} ]]; then
+        warn "Debian en pruebas ($CODENAME): no está probado, pero se intenta la instalación."
+      else
+        (( major >= 12 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Debian 12 o posterior."
+      fi
+      ;;
+    *) die "Sistema no soportado: ${PRETTY_NAME:-desconocido}. Usa Ubuntu (22.04 o posterior) o Debian (12 o posterior)." ;;
+  esac
+  [[ -n $CODENAME ]] || die "No se pudo detectar el nombre de la versión de $PRETTY_NAME."
+  ok "$PRETTY_NAME"
+}
+
+[[ $EUID -eq 0 ]] || { echo "Ejecuta el script como root (sudo)." >&2; exit 1; }
+[[ $PRIMARY =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Falta --primary (IP pública del servidor del panel)"
+NS_NAME=$(tr '[:upper:]' '[:lower:]' <<<"${NS_NAME%.}")
+[[ $NS_NAME =~ ^([a-z0-9-]+\.)+[a-z]{2,}$ ]] || die "Falta --ns (nombre de este nameserver, por ejemplo ns2.midominio.com)"
+: >"$LOG"
+
+printf '\n%s%s  HostPanel%s — DNS secundario (%s) del panel %s\n' "$O" "$B" "$N" "$NS_NAME" "$PRIMARY"
+step "Comprobando el sistema"
+check_os
+
+step "Paquetes"
+q apt-get update
+apt_install ca-certificates curl ufw sqlite3 fail2ban python3-systemd unattended-upgrades
+ok "Paquetes base"
+
+# Port 53 is taken by systemd-resolved's stub listener on Ubuntu.
+if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+  mkdir -p /etc/systemd/resolved.conf.d
+  printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1 9.9.9.9\n' >/etc/systemd/resolved.conf.d/hostpanel.conf
+  ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  q systemctl restart systemd-resolved
+  ok "Puerto 53 liberado (systemd-resolved sin stub local)"
+fi
+
+step "PowerDNS (secundario)"
+# Configure before the package starts it with its default bind backend.
+printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
+apt_install pdns-server pdns-backend-sqlite3 || { rm -f /usr/sbin/policy-rc.d; die "No se pudo instalar PowerDNS"; }
+rm -f /usr/sbin/policy-rc.d
+q systemctl stop pdns || true
+rm -f /etc/powerdns/pdns.d/bind.conf
+mkdir -p /var/lib/powerdns
+DB=/var/lib/powerdns/pdns.sqlite3
+if [[ ! -s $DB ]]; then
+  SCHEMA=$(find /usr/share -name 'schema.sqlite3.sql' 2>/dev/null | head -1 || true)
+  [[ -n $SCHEMA ]] || die "No se encontró el esquema SQLite de PowerDNS"
+  sqlite3 "$DB" <"$SCHEMA"
+fi
+if [[ -f /proc/net/if_inet6 ]]; then LISTEN='0.0.0.0, ::'; else LISTEN='0.0.0.0'; fi
+cat >/etc/powerdns/pdns.conf <<EOF
+# Generated by HostPanel: secondary nameserver $NS_NAME for the panel at $PRIMARY.
+launch=gsqlite3
+gsqlite3-database=$DB
+gsqlite3-dnssec=yes
+local-address=$LISTEN
+local-port=53
+# Secondary: zones come from the primary (AXFR); new ones are created when it sends NOTIFY.
+secondary=yes
+autosecondary=yes
+allow-notify-from=$PRIMARY
+xfr-cycle-interval=60
+# Nobody may copy the zones from here.
+allow-axfr-ips=127.0.0.1,::1
+version-string=anonymous
+EOF
+chown -R pdns:pdns /var/lib/powerdns
+chown root:pdns /etc/powerdns/pdns.conf; chmod 0640 /etc/powerdns/pdns.conf
+
+# Trust the primary for zones listing this nameserver (PowerDNS "autoprimary").
+q pdnsutil add-autoprimary "$PRIMARY" "$NS_NAME" hostpanel \
+  || q pdnsutil autoprimary add "$PRIMARY" "$NS_NAME" hostpanel \
+  || q sqlite3 "$DB" "INSERT INTO supermasters (ip, nameserver, account) SELECT '$PRIMARY', '$NS_NAME', 'hostpanel' WHERE NOT EXISTS (SELECT 1 FROM supermasters WHERE ip = '$PRIMARY');" \
+  || die "No se pudo registrar el servidor principal en PowerDNS"
+chown -R pdns:pdns /var/lib/powerdns
+q systemctl enable pdns
+q systemctl restart pdns || die "PowerDNS no arrancó. ¿Está ocupado el puerto 53? (ss -lunp | grep :53)"
+ok "PowerDNS escuchando en el puerto 53 como secundario de $PRIMARY"
+
+step "Cortafuegos y mantenimiento"
+SSH_PORT=$(ss -tlnp 2>/dev/null | awk '/sshd/ {n=split($4,a,":"); print a[n]; exit}' || true)
+q ufw allow "${SSH_PORT:-22}/tcp" comment 'SSH'
+q ufw allow 53/tcp
+q ufw allow 53/udp
+q ufw --force enable
+q systemctl enable --now fail2ban || true
+ok "UFW: SSH (${SSH_PORT:-22}) y DNS 53"
+
+MY_IP=$(curl -4 -fsS --max-time 6 https://api.ipify.org 2>/dev/null || true)
+trap - ERR
+printf '\n%s%s  ✔ DNS secundario listo%s\n\n' "$G" "$B" "$N"
+cat <<EOF
+  Ahora, en el panel (Servidores → DNS secundario), escribe la IP de esta máquina:
+
+      ${O}${MY_IP:-<IP pública de este servidor>}${N}
+
+  El panel le enviará todas las zonas y apuntará $NS_NAME a esta IP.
+  Log: $LOG
+EOF

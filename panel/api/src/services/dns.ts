@@ -1,6 +1,29 @@
 /** PowerDNS Authoritative HTTP API client. Zones are the source of truth for DNS records. */
 import { config } from '../config.ts';
+import { getSetting } from '../db.ts';
 import { HttpError } from '../lib/validate.ts';
+
+/** Secondary nameserver on another machine (Servidores → DNS secundario), if any. */
+export interface SecondaryDns {
+  ip: string;
+  ipv6: string | null;
+  added_at: string;
+}
+export function secondaryDns(): SecondaryDns | null {
+  try {
+    const raw = getSetting('dns_secondary');
+    return raw ? (JSON.parse(raw) as SecondaryDns) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** IPs a hostname of the server answers on: ns2 is the secondary machine when there is one. */
+export function nameserverIps(host: string): { ipv4: string; ipv6: string | null } {
+  const sec = secondaryDns();
+  if (sec && host === config.ns2) return { ipv4: sec.ip, ipv6: sec.ipv6 };
+  return { ipv4: config.serverIp, ipv6: config.serverIpv6 || null };
+}
 
 export interface DnsRecord {
   name: string; // relative name: "@", "www", "mail"…
@@ -128,11 +151,37 @@ export async function createZone(zone: string, defaults: { name: string; type: s
   }
   await pdns('POST', '/zones', {
     name: fqdn(zone),
-    kind: 'Native',
+    // Master: changes are announced (NOTIFY) and transferable (AXFR) to the secondary nameserver.
+    kind: 'Master',
     nameservers: [fqdn(config.ns1), fqdn(config.ns2)],
     soa_edit_api: 'DEFAULT',
     rrsets: [...grouped.values()].filter((r) => r.type !== 'NS' || r.name !== fqdn(zone)),
   });
+  if (secondaryDns()) await notifyZone(zone).catch(() => {});
+}
+
+// --- replication to the secondary nameserver ------------------------------------------------
+
+export async function setZoneKind(zone: string, kind: 'Native' | 'Master') {
+  if (config.dev) return;
+  await pdns('PUT', `/zones/${fqdn(zone)}`, { kind });
+}
+
+/** Tells the secondary the zone changed, so it transfers it now (it also checks every minute). */
+export async function notifyZone(zone: string) {
+  if (config.dev) return;
+  await pdns('PUT', `/zones/${fqdn(zone)}/notify`);
+}
+
+/** SOA serial of a zone on this server. */
+export async function zoneSerial(zone: string): Promise<number | null> {
+  if (config.dev) return 2026110301;
+  const data = await pdns<{ serial?: number }>('GET', `/zones/${fqdn(zone)}`);
+  return typeof data.serial === 'number' ? data.serial : null;
+}
+
+export async function deleteRRSet(zone: string, name: string, type: string) {
+  await patchRRSets(zone, [{ name: toAbsolute(name, zone), type, ttl: 3600, records: [], changetype: 'DELETE' }]);
 }
 
 export async function deleteZone(zone: string) {
@@ -210,7 +259,7 @@ export function defaultZoneRecords(zone: string) {
   // Glue for our own nameservers / mail host when they live under this zone.
   for (const host of [config.ns1, config.ns2, config.mailHostname, config.panelDomain]) {
     if (host && host.endsWith(`.${zone}`)) {
-      recs.push({ name: host.slice(0, -(zone.length + 1)), type: 'A', content: config.serverIp });
+      recs.push({ name: host.slice(0, -(zone.length + 1)), type: 'A', content: nameserverIps(host).ipv4 });
     }
   }
   return recs;

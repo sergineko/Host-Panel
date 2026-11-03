@@ -8,7 +8,7 @@ import { generatePassword, passwordStrength, StrengthMeter, usernameHint } from 
 import { TotpEnroll, AUTH_APPS } from '../components/TwoFactor';
 import { DomainConnection } from '../components/Connection';
 import { JobLog } from '../components/JobLog';
-import { LicenseChooser, type Plan } from '../components/LicenseCards';
+import { LicenseChooser, useLicense, type Plan } from '../components/LicenseCards';
 import { Button, Callout, Card, Copyable, ErrorBox, Field, Input, Select, Spinner, cx } from '../components/ui';
 
 interface SetupStatus {
@@ -41,36 +41,81 @@ const STEPS = [
 ] as const;
 type StepId = (typeof STEPS)[number]['id'];
 
-function Stepper({ current }: { current: StepId }) {
+/** Step bar. Steps already completed (done) can be opened again with onSelect. */
+function Stepper({ current, done, onSelect }: { current: StepId; done?: Set<StepId>; onSelect?: (s: StepId) => void }) {
   const idx = STEPS.findIndex((s) => s.id === current);
   return (
     <ol className="mb-6 flex items-center gap-2" aria-label="Pasos de la configuración">
-      {STEPS.map((s, i) => (
-        <li key={s.id} className="flex flex-1 items-center gap-2" aria-current={i === idx ? 'step' : undefined}>
-          <span
-            className={cx(
-              'grid size-7 shrink-0 place-items-center rounded-full border text-xs font-semibold transition-colors [&>svg]:size-3.5',
-              i < idx ? 'border-ok bg-ok text-white' : i === idx ? 'border-accent bg-accent text-accent-fg' : 'border-border bg-surface text-muted',
+      {STEPS.map((s, i) => {
+        const completed = done ? done.has(s.id) && i !== idx : i < idx;
+        const clickable = !!onSelect && completed;
+        const dot = (
+          <>
+            <span
+              className={cx(
+                'grid size-7 shrink-0 place-items-center rounded-full border text-xs font-semibold transition-colors [&>svg]:size-3.5',
+                completed ? 'border-ok bg-ok text-white' : i === idx ? 'border-accent bg-accent text-accent-fg' : 'border-border bg-surface text-muted',
+                clickable && 'group-hover:brightness-110',
+              )}
+            >
+              {completed ? <Check /> : i + 1}
+            </span>
+            <span className={cx('hidden text-[13px] sm:inline', i === idx ? 'font-semibold' : 'text-muted', clickable && 'group-hover:text-fg group-hover:underline')}>{s.label}</span>
+          </>
+        );
+        return (
+          <li key={s.id} className="flex flex-1 items-center gap-2" aria-current={i === idx ? 'step' : undefined}>
+            {clickable ? (
+              <button type="button" className="group flex items-center gap-2" onClick={() => onSelect!(s.id)} title={`Volver a ${s.label}`}>
+                {dot}
+              </button>
+            ) : (
+              dot
             )}
-          >
-            {i < idx ? <Check /> : i + 1}
-          </span>
-          <span className={cx('hidden text-[13px] sm:inline', i === idx ? 'font-semibold' : 'text-muted')}>{s.label}</span>
-          {i < STEPS.length - 1 && <span className={cx('h-px flex-1', i < idx ? 'bg-ok' : 'bg-border')} />}
-        </li>
-      ))}
+            {i < STEPS.length - 1 && <span className={cx('h-px flex-1', completed ? 'bg-ok' : 'bg-border')} />}
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
-function Shell({ step, children, wide }: { step?: StepId; children: ReactNode; wide?: boolean }) {
+/** Footer of a step: "Atrás" on the left, the main action on the right. */
+function StepActions({ onBack, children }: { onBack?: () => void; children?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+      {onBack ? (
+        <Button type="button" variant="ghost" onClick={onBack}>
+          Atrás
+        </Button>
+      ) : (
+        <span />
+      )}
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </div>
+  );
+}
+
+function Shell({
+  step,
+  children,
+  wide,
+  done,
+  onSelect,
+}: {
+  step?: StepId;
+  children: ReactNode;
+  wide?: boolean;
+  done?: Set<StepId>;
+  onSelect?: (s: StepId) => void;
+}) {
   return (
     <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,var(--accent-soft),transparent_55%)] px-4 py-10">
       <div className={cx('mx-auto w-full', wide ? 'max-w-3xl' : 'max-w-xl')}>
         <div className="mb-8 flex justify-center">
           <Logo />
         </div>
-        {step && <Stepper current={step} />}
+        {step && <Stepper current={step} done={done} onSelect={onSelect} />}
         {children}
       </div>
     </div>
@@ -233,7 +278,7 @@ function LicenseStep({ token, status, onDone }: { token: string; status: SetupSt
 
 // --- step 2: two-factor authentication -----------------------------------------------------
 
-function TwoFactorStep({ onDone }: { onDone: () => void }) {
+function TwoFactorStep({ onDone, onBack }: { onDone: () => void; onBack?: () => void }) {
   const [enrolling, setEnrolling] = useState(false);
   const [confirmSkip, setConfirmSkip] = useState(false);
   const skip = useMutation({ mutationFn: () => api.post('/api/setup/2fa/skip'), onSuccess: onDone });
@@ -257,14 +302,14 @@ function TwoFactorStep({ onDone }: { onDone: () => void }) {
             </Callout>
           )}
           {skip.error && <ErrorBox error={skip.error} />}
-          <div className="flex flex-wrap justify-end gap-2">
+          <StepActions onBack={onBack}>
             <Button variant="ghost" loading={skip.isPending} onClick={() => (confirmSkip ? skip.mutate() : setConfirmSkip(true))}>
               {confirmSkip ? 'Sí, omitir por ahora' : 'Omitir'}
             </Button>
             <Button variant="primary" onClick={() => setEnrolling(true)}>
               Activar verificación en dos pasos
             </Button>
-          </div>
+          </StepActions>
         </div>
       )}
     </Card>
@@ -273,7 +318,7 @@ function TwoFactorStep({ onDone }: { onDone: () => void }) {
 
 // --- step 3: main domain ---------------------------------------------------------------------
 
-function DomainStep({ state, onDone }: { state: SetupState; onDone: () => void }) {
+function DomainStep({ state, onDone, onBack }: { state: SetupState; onDone: () => void; onBack?: () => void }) {
   const qc = useQueryClient();
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const zones = useMemo(() => {
@@ -359,11 +404,11 @@ function DomainStep({ state, onDone }: { state: SetupState; onDone: () => void }
           </Field>
         </div>
         {start.error && <ErrorBox error={start.error} />}
-        <div className="flex justify-end">
+        <StepActions onBack={onBack}>
           <Button variant="primary" type="submit" disabled={!valid || !email} loading={start.isPending}>
-            Configurar dominio
+            {state.identity.nameservers_ready && clean === state.identity.base_domain ? 'Guardar y continuar' : 'Configurar dominio'}
           </Button>
-        </div>
+        </StepActions>
       </form>
     </Card>
   );
@@ -371,7 +416,7 @@ function DomainStep({ state, onDone }: { state: SetupState; onDone: () => void }
 
 // --- step 4: what to change outside the panel -------------------------------------------------
 
-function DnsStep({ state }: { state: SetupState }) {
+function DnsStep({ state, onBack }: { state: SetupState; onBack?: () => void }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const finish = useMutation({
@@ -391,9 +436,19 @@ function DnsStep({ state }: { state: SetupState }) {
       <Card title="Resumen de cambios" icon={<Sparkles />}>
         <ol className="space-y-2 text-[13px]">
           <li>
-            <strong>Registrador de {id.base_domain}</strong>: crea los glue records <span className="font-mono">{id.nameservers[0]}</span> y{' '}
-            <span className="font-mono">{id.nameservers[1]}</span> → <span className="font-mono">{id.server_ip}</span>
-            {id.server_ipv6 && <> (y <span className="font-mono">{id.server_ipv6}</span>)</>}, y pon esos dos como nameservers del dominio.
+            <strong>Registrador de {id.base_domain}</strong>: crea los glue records{' '}
+            {(id.nameserver_ips ?? id.nameservers.map((host) => ({ host, ipv4: id.server_ip, ipv6: id.server_ipv6 }))).map((n, i) => (
+              <span key={n.host}>
+                {i > 0 && ' y '}
+                <span className="font-mono">{n.host}</span> → <span className="font-mono">{n.ipv4}</span>
+              </span>
+            ))}
+            , y pon esos dos como nameservers del dominio.
+            {!id.secondary_dns && (
+              <span className="mt-1 block text-xs text-muted">
+                Los dos apuntan a este servidor. Para que tus dominios sigan funcionando si cae, añade después un DNS secundario en otra máquina (Servidores → DNS secundario).
+              </span>
+            )}
           </li>
           <li>
             <strong>Proveedor del VPS</strong>: DNS inverso (PTR) de <span className="font-mono">{id.server_ip}</span> → <span className="font-mono">{id.mail_hostname}</span>, y
@@ -409,21 +464,110 @@ function DnsStep({ state }: { state: SetupState }) {
       </Card>
       {state.main_domain_id !== null && <DomainConnection domainId={state.main_domain_id} />}
       {finish.error && <ErrorBox error={finish.error} />}
-      <div className="flex justify-end">
+      <StepActions onBack={onBack}>
         <Button variant="primary" loading={finish.isPending} onClick={() => finish.mutate()}>
           Ir al panel
         </Button>
-      </div>
+      </StepActions>
     </div>
   );
 }
 
 // --- page -------------------------------------------------------------------------------------
 
+/** Licence step seen again after creating the account: current plan, or replace the licence. */
+function LicenseReview({ onBack, onNext }: { onBack?: () => void; onNext: () => void }) {
+  const qc = useQueryClient();
+  const lic = useLicense();
+  const [changing, setChanging] = useState(false);
+  const install = useMutation({
+    mutationFn: (token: string) => api.put('/api/license', { token }),
+    onSuccess: async () => {
+      setChanging(false);
+      await qc.invalidateQueries({ queryKey: ['license'] });
+    },
+  });
+  if (lic.isLoading) return <Spinner />;
+  if (lic.error) return <ErrorBox error={lic.error} />;
+  const info = lic.data!;
+  return (
+    <Card title="Licencia del panel" icon={<BadgeCheck />}>
+      {changing ? (
+        <div className="space-y-3">
+          <LicenseChooser plans={info.plans} storeUrl={info.store_url} onActivate={(t) => install.mutate(t)} pending={install.isPending} error={install.error} />
+          <StepActions onBack={() => setChanging(false)} />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <Callout tone="ok" title={`Plan ${info.plan?.name ?? '—'}`}>
+            {info.license ? (
+              <>
+                Licencia <span className="font-mono">{info.license.id}</span> a nombre de {info.license.email}.
+              </>
+            ) : (
+              'Plan de desarrollo.'
+            )}
+          </Callout>
+          <StepActions onBack={onBack}>
+            <Button onClick={() => setChanging(true)}>Cambiar licencia</Button>
+            <Button variant="primary" onClick={onNext}>
+              Continuar
+            </Button>
+          </StepActions>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** The account can't be recreated, but its step shows what was set and where to change it. */
+function AccountReview({ state, onBack, onNext }: { state: SetupState; onBack: () => void; onNext: () => void }) {
+  return (
+    <Card title="Cuenta de administrador" icon={<UserRound />}>
+      <div className="space-y-4">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+          <dt className="text-muted">Usuario</dt>
+          <dd className="font-mono">{state.username}</dd>
+          <dt className="text-muted">Email</dt>
+          <dd>{state.email || '—'}</dd>
+        </dl>
+        <p className="text-[13px] text-muted">La cuenta ya está creada. Podrás cambiar la contraseña y el email en Ajustes al terminar.</p>
+        <StepActions onBack={onBack}>
+          <Button variant="primary" onClick={onNext}>
+            Continuar
+          </Button>
+        </StepActions>
+      </div>
+    </Card>
+  );
+}
+
+function TwoFactorReview({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  return (
+    <Card title="Verificación en dos pasos" icon={<ShieldCheck />}>
+      <div className="space-y-4">
+        <Callout tone="ok" title="Activa">
+          Al entrar se pedirá el código de tu app. Podrás generar nuevos códigos de recuperación o desactivarla en Ajustes.
+        </Callout>
+        <StepActions onBack={onBack}>
+          <Button variant="primary" onClick={onNext}>
+            Continuar
+          </Button>
+        </StepActions>
+      </div>
+    </Card>
+  );
+}
+
 function Wizard() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['setup-state'], queryFn: () => api.get<SetupState>('/api/setup/state'), retry: false });
-  const refresh = () => qc.invalidateQueries({ queryKey: ['setup-state'] });
+  // A step the user opened again from the step bar or with "Atrás" (null: the next pending one).
+  const [view, setView] = useState<StepId | null>(null);
+  const refresh = async () => {
+    setView(null);
+    await qc.invalidateQueries({ queryKey: ['setup-state'] });
+  };
   if (q.isLoading) return <Shell><Spinner /></Shell>;
   if (q.error) {
     if (q.error instanceof ApiError && q.error.status === 401) return <Navigate to="/login" replace />;
@@ -431,9 +575,34 @@ function Wizard() {
   }
   const s = q.data!;
   if (!s.pending) return <Navigate to="/" replace />;
-  if (!s.twofa_done) return <Shell step="2fa"><TwoFactorStep onDone={refresh} /></Shell>;
-  if (!s.identity.nameservers_ready || s.identity.job) return <Shell step="domain"><DomainStep state={s} onDone={refresh} /></Shell>;
-  return <Shell step="dns" wide><DnsStep state={s} /></Shell>;
+
+  const domainReady = s.identity.nameservers_ready && !s.identity.job;
+  const next: StepId = !s.twofa_done ? '2fa' : !domainReady ? 'domain' : 'dns';
+  // While the installer runs with the new domain, stay on its progress.
+  const step: StepId = s.identity.job ? 'domain' : (view ?? next);
+  const done = new Set<StepId>(['license', 'account']);
+  if (s.twofa_done) done.add('2fa');
+  if (domainReady) done.add('domain');
+  if (domainReady) done.add('dns');
+  const go = (target: StepId) => setView(target === next ? null : target);
+  const shell = (content: ReactNode, wide?: boolean) => (
+    <Shell step={step} done={done} onSelect={s.identity.job ? undefined : go} wide={wide}>
+      {content}
+    </Shell>
+  );
+
+  switch (step) {
+    case 'license':
+      return shell(<LicenseReview onNext={() => go('account')} />);
+    case 'account':
+      return shell(<AccountReview state={s} onBack={() => go('license')} onNext={() => go('2fa')} />);
+    case '2fa':
+      return shell(s.totp ? <TwoFactorReview onBack={() => go('account')} onNext={() => go('domain')} /> : <TwoFactorStep onDone={refresh} onBack={() => go('account')} />);
+    case 'domain':
+      return shell(<DomainStep state={s} onDone={refresh} onBack={s.identity.job ? undefined : () => go('2fa')} />);
+    default:
+      return shell(<DnsStep state={s} onBack={() => go('domain')} />, true);
+  }
 }
 
 export default function Setup() {

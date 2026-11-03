@@ -8,6 +8,7 @@ import { hashPassword } from '../lib/crypto.ts';
 import { badRequest, domainName, HttpError, parse } from '../lib/validate.ts';
 import { mainDomainCandidates, serverIdentity } from '../services/identity.ts';
 import { hasLicense, installLicense, LICENSE_STORE_URL, PLANS } from '../services/license.ts';
+import { runningJob } from '../services/jobs.ts';
 import {
   checkSetupToken,
   configureMainDomain,
@@ -115,6 +116,9 @@ export default async function setupRoutes(app: FastifyInstance) {
   // Step 3: main domain + time zone. Re-runs the installer with the domain (background job).
   app.post('/api/setup/domain', async (req) => {
     requireSetup();
+    // Already configuring (double click, page reloaded while the installer runs): follow that job.
+    const running = runningJob('identity');
+    if (running) return { job_id: running.id };
     const body = parse(
       z.object({
         domain: domainName.transform((d) => d.replace(/^www\./, '')),

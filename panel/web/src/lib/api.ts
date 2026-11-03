@@ -496,6 +496,8 @@ export interface ServerIdentity {
   mail_ready: boolean;
   server_ip: string;
   server_ipv6: string | null;
+  nameserver_ips?: { host: string; ipv4: string; ipv6: string | null }[];
+  secondary_dns?: { ip: string; ipv6: string | null } | null;
   admin_email: string;
   job: { id: number } | null;
   candidates?: { id: number; name: string }[];

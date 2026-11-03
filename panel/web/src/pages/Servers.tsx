@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Cpu, HardDrive, MemoryStick, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
 import { api, type ServerNode } from '../lib/api';
+import { DnsSecondaryCard } from '../components/DnsSecondary';
 import { bytes, timeAgo } from '../lib/format';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, cx } from '../components/ui';
 
@@ -199,6 +200,9 @@ export default function Servers() {
           </Button>
         }
       />
+      <div className="mb-4">
+        <DnsSecondaryCard />
+      </div>
       {q.isLoading ? (
         <Spinner />
       ) : q.error ? (

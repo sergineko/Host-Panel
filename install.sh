@@ -461,6 +461,10 @@ apt_install pdns-server pdns-backend-sqlite3 || { rm -f /usr/sbin/policy-rc.d; d
 rm -f /usr/sbin/policy-rc.d
 q systemctl stop pdns || true
 rm -f /etc/powerdns/pdns.d/bind.conf
+# pdns.conf includes pdns.d (replication to a secondary nameserver): set aside any other file there.
+for f in /etc/powerdns/pdns.d/*.conf; do
+  [[ -e $f && $(basename "$f") != hostpanel-* ]] && mv "$f" "$f.disabled-by-hostpanel"
+done
 mkdir -p /var/lib/powerdns
 if [[ ! -s /var/lib/powerdns/pdns.sqlite3 ]]; then
   SCHEMA=$(find /usr/share -name 'schema.sqlite3.sql' 2>/dev/null | head -1 || true)

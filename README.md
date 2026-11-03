@@ -11,7 +11,7 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Rutas protegidas con contraseña** (privacidad de directorios): `/` o `/admin` piden usuario y contraseña desde Caddy (bcrypt); la ruta más específica manda, como con `.htaccess`
 - **Ajustes de PHP por sitio** (memoria, subida, tiempo, variables, zona horaria, mostrar errores) y registro de errores PHP en el panel
 - Sitios **estáticos, PHP y Node.js** con despliegue automático desde **GitHub** (webhook firmado, rollback, sin caídas)
-- **Multidominio** con **DNS** propio (PowerDNS) y editor de registros
+- **Multidominio** con **DNS** propio (PowerDNS), editor de registros y **DNS secundario** en otra máquina (ns2 con otra IP)
 - **SSL de Let's Encrypt por dominio**: cada dominio vinculado a un sitio, Worker, balanceador o proxy recibe su certificado y se renueva solo; el panel muestra caducidad, renovación y el motivo si falla (DNS, puertos, límites)
 - **Correo** para todos los dominios (Stalwart: SMTP, IMAP, DKIM, SPF, DMARC, antispam) + **webmail** (Roundcube)
 - **Proxy inverso gráfico** (Caddy): rutas, balanceo, redirecciones y **SSL automático**
@@ -118,6 +118,23 @@ registros que tienes que copiar allí.
 
 La pestaña **Conexión** comprueba en vivo qué ve internet (nameservers, registro A y MX) y marca cada paso cuando se
 completa. La propagación suele tardar menos de una hora (como mucho 48 h).
+
+### DNS secundario (ns2 en otra máquina)
+
+Por defecto `ns1` y `ns2` apuntan al mismo servidor: si cae, tus dominios dejan de resolver. Para evitarlo, añade un
+**DNS secundario** en otro VPS (512 MB bastan, mejor en otro proveedor) desde **Servidores → DNS secundario**:
+
+1. Ejecuta en ese VPS el comando que muestra el panel:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/dns-secondary.sh | sudo bash -s -- --primary <IP del panel> --ns ns2.<principal>
+   ```
+   Instala solo PowerDNS como secundario: acepta zonas únicamente del panel y crea solo las nuevas cuando el panel las anuncia.
+2. Escribe su IP pública en el panel. El panel activa la replicación (NOTIFY + AXFR), le envía todas las zonas y apunta
+   `ns2.<principal>` a esa IP.
+3. En el registrador del dominio principal, cambia el glue record de `ns2.<principal>` a la IP del secundario.
+
+El panel muestra para cada zona si el secundario está al día (mismo serial SOA) y permite reenviarlas. Los nameservers de
+tus dominios no cambian.
 
 ### 4. Reverse DNS (PTR)
 

@@ -32,9 +32,27 @@ export function serverIdentity() {
     mail_ready: mailAvailable() && !!config.mailHostname,
     server_ip: config.serverIp,
     server_ipv6: config.serverIpv6 || null,
+    /** IP of each nameserver (ns2 is the secondary machine when there is one). */
+    nameserver_ips: [config.ns1, config.ns2].map((host) => ({ host, ...dns.nameserverIps(host) })),
+    secondary_dns: dns.secondaryDns(),
     admin_email: config.adminEmail,
     job: runningJob('identity') ?? null,
   };
+}
+
+/**
+ * A/AAAA records of ns1, ns2, mail and panel in the main domain's zone. ns2 points to the
+ * secondary nameserver when there is one.
+ */
+export async function publishServerHosts(baseDomain: string) {
+  for (const host of [config.ns1, config.ns2, config.mailHostname, config.panelDomain]) {
+    if (!host?.endsWith(`.${baseDomain}`)) continue;
+    const rel = host.slice(0, -(baseDomain.length + 1));
+    const ips = dns.nameserverIps(host);
+    await dns.setRecords(baseDomain, rel, 'A', [ips.ipv4]);
+    if (ips.ipv6) await dns.setRecords(baseDomain, rel, 'AAAA', [ips.ipv6]);
+    else await dns.deleteRRSet(baseDomain, rel, 'AAAA').catch(() => {});
+  }
 }
 
 const identityKey = () => JSON.stringify([config.ns1, config.ns2, config.mailHostname]);
@@ -60,12 +78,7 @@ export async function reconcileIdentity(force = false) {
   }
   const base = config.baseDomain && domains.find((d) => d.name === config.baseDomain && d.dns_enabled);
   if (base) {
-    for (const host of [config.ns1, config.ns2, config.mailHostname, config.panelDomain]) {
-      if (!host?.endsWith(`.${base.name}`)) continue;
-      const rel = host.slice(0, -(base.name.length + 1));
-      await dns.setRecords(base.name, rel, 'A', [config.serverIp]);
-      if (config.serverIpv6) await dns.setRecords(base.name, rel, 'AAAA', [config.serverIpv6]);
-    }
+    await publishServerHosts(base.name);
   }
   if (mailAvailable() && config.mailHostname) {
     for (const d of domains) {
@@ -155,9 +168,7 @@ export async function delegationStatus(d: DomainRow) {
     current_nameservers: current,
     delegated,
     /** Child nameservers ("glue") to create at the registrar of the main domain. */
-    glue: isMain
-      ? expected.map((host) => ({ host, ipv4: config.serverIp, ipv6: config.serverIpv6 || null }))
-      : [],
+    glue: isMain ? expected.map((host) => ({ host, ...dns.nameserverIps(host) })) : [],
     public_a: a,
     public_mx: mx.map(norm),
     points_here: a.includes(config.serverIp),
