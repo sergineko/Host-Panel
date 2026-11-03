@@ -15,7 +15,7 @@ import { config } from '../config.ts';
 import type { SiteRow } from '../db.ts';
 import { HttpError } from '../lib/validate.ts';
 import { exec } from '../lib/exec.ts';
-import { chownSite, sitePaths } from './system.ts';
+import { chownSite, RUNUSER, sitePaths } from './system.ts';
 import { wpDir } from './wordpress.ts';
 
 export interface FileRoot {
@@ -271,7 +271,7 @@ export async function extractArchive(site: SiteRow, rootId: string, rel: string)
   else if (lower.endsWith('.tar')) cmd = ['tar', '--no-same-owner', '-xf', real, '-C', dir];
   else throw new HttpError(400, 'Formato no soportado: usa .zip, .tar.gz, .tgz o .tar');
   // Runs as the site user: an archive with "../" or absolute paths cannot write elsewhere.
-  await exec('runuser', ['-u', `hp-${site.id}`, '--', ...cmd], { timeoutMs: 10 * 60_000 });
+  await exec(RUNUSER, ['-u', `hp-${site.id}`, '--', ...cmd], { timeoutMs: 10 * 60_000 });
   await giveBack(site, dir);
 }
 

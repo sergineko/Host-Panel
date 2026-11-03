@@ -1,6 +1,8 @@
 /** Stalwart Mail Server management API client. Stalwart is the source of truth for mailboxes. */
+import { existsSync } from 'node:fs';
 import { config } from '../config.ts';
 import { HttpError } from '../lib/validate.ts';
+import { tryExec } from '../lib/exec.ts';
 
 export interface Mailbox {
   email: string;
@@ -23,6 +25,18 @@ interface Principal {
 const devBoxes = new Map<string, Principal>();
 const devDomains = new Set<string>();
 
+/** Why the mail server API can't be reached, with the command that shows the cause. */
+async function stalwartDownReason() {
+  const base = 'No se pudo conectar con el servidor de correo (Stalwart)';
+  if (!existsSync('/opt/stalwart/bin/stalwart')) {
+    return `${base}: no está instalado. Se instala al elegir el dominio principal del servidor (Ajustes); el registro de esa tarea indica si falló.`;
+  }
+  const state = (await tryExec('systemctl', ['is-active', 'stalwart'])).output.trim();
+  if (state === 'activating') return `${base}: se está iniciando, inténtalo de nuevo en unos segundos.`;
+  if (state !== 'active') return `${base}: el servicio está ${state || 'parado'}. Mira la causa con: sudo journalctl -u stalwart -n 60`;
+  return `${base}: el servicio está en marcha pero su API (${config.stalwartApi}) no responde. Mira: sudo journalctl -u stalwart -n 60`;
+}
+
 async function stalwart<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
@@ -35,7 +49,7 @@ async function stalwart<T>(method: string, path: string, body?: unknown): Promis
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new HttpError(502, 'No se pudo conectar con el servidor de correo (Stalwart)');
+    throw new HttpError(502, await stalwartDownReason());
   }
   const text = await res.text();
   let data: { data?: unknown; error?: string; details?: string } = {};

@@ -23,6 +23,9 @@ set -Eeuo pipefail
 HP_REPO="${HP_REPO:-https://github.com/sergineko/Host-Panel.git}"
 HP_BRANCH="${HP_BRANCH:-main}"
 ROUNDCUBE_FALLBACK=1.6.11
+# Stalwart 1.0 changed its settings schema and database layout (no in-place upgrade from 0.16):
+# the panel is integrated with the 0.16 series, so that is what gets installed.
+STALWART_VERSION=v0.16.27
 NODE_MAJOR=24
 DEFAULT_PHP=8.4
 
@@ -507,8 +510,18 @@ if [[ -n $MAIL_HOSTNAME ]]; then
   step "Servidor de correo (Stalwart)"
   id stalwart >/dev/null 2>&1 || q useradd --system --user-group --home-dir /opt/stalwart --shell /usr/sbin/nologin stalwart
   mkdir -p /opt/stalwart/{bin,etc/certs,data,logs}
-  if [[ $UPDATE == 1 || ! -x /opt/stalwart/bin/stalwart ]]; then
-    curl -fsSL --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/latest/download/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz \
+  STALWART_INSTALLED=$(/opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+  if [[ -n $STALWART_INSTALLED && $STALWART_INSTALLED != 0.16.* ]]; then
+    warn "Stalwart $STALWART_INSTALLED no es compatible con el panel: se instala ${STALWART_VERSION#v}"
+    q systemctl stop stalwart || true
+    # A 1.x data folder can't be read by 0.16: keep it aside, never delete it.
+    if [[ -d /opt/stalwart/data && -n $(ls -A /opt/stalwart/data 2>/dev/null) ]]; then
+      mv /opt/stalwart/data "/opt/stalwart/data.v$STALWART_INSTALLED-$(date +%Y%m%d%H%M%S)"
+      mkdir -p /opt/stalwart/data
+    fi
+  fi
+  if [[ $UPDATE == 1 || ! -x /opt/stalwart/bin/stalwart || $STALWART_INSTALLED != 0.16.* ]]; then
+    curl -fsSL --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/download/${STALWART_VERSION}/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz \
       || die "No se pudo descargar Stalwart"
     tar -xzf /tmp/stalwart.tgz -C /opt/stalwart/bin; rm -f /tmp/stalwart.tgz
     if [[ -f /opt/stalwart/bin/stalwart-mail && ! -f /opt/stalwart/bin/stalwart ]]; then mv /opt/stalwart/bin/stalwart-mail /opt/stalwart/bin/stalwart; fi

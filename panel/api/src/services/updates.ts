@@ -13,6 +13,9 @@ import { runningJob, startDetachedJob, startJob } from './jobs.ts';
 import { installedPhpVersions } from './php.ts';
 
 export const COMPONENTS = ['panel', 'caddy', 'stalwart', 'roundcube', 'node', 'system'] as const;
+
+/** Latest Stalwart release the panel is integrated with (the 0.16 series). */
+export const STALWART_SUPPORTED = '0.16.27';
 /** Fixed components, "all", or one installed PHP branch ("php-8.5"). */
 export type ComponentId = string;
 export const PHP_COMPONENT = /^php-(\d+\.\d+)$/;
@@ -135,7 +138,8 @@ export async function checkUpdates(force = false): Promise<ComponentStatus[]> {
   const panel = await panelVersions();
   const latest: Record<string, string> = {
     caddy: await githubLatest('caddyserver/caddy').catch(() => ''),
-    stalwart: await githubLatest('stalwartlabs/stalwart').catch(() => ''),
+    // Pinned: Stalwart 1.x changed its settings and database layout (see STALWART_VERSION in hp-update).
+    stalwart: STALWART_SUPPORTED,
     roundcube: await githubLatest('roundcube/roundcubemail').catch(() => ''),
     node: await nodeLatest(process.versions.node.split('.')[0]!).catch(() => ''),
   };

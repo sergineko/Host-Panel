@@ -98,10 +98,16 @@ export async function currentTarget(id: number): Promise<string | null> {
   }
 }
 
+/**
+ * Absolute path of runuser (util-linux, in /usr/sbin). Commands run as a site get a PATH without
+ * sbin, and spawn looks the program up with that same PATH, so it must not rely on it.
+ */
+export const RUNUSER = ['/usr/sbin/runuser', '/sbin/runuser', '/usr/bin/runuser'].find((p) => existsSync(p)) ?? 'runuser';
+
 /** Runs a shell command as the site's Linux user inside the given directory. */
 export function runAsSite(id: number, command: string, cwd: string, env: Record<string, string>, opts: ExecOptions = {}) {
   const p = sitePaths(id);
-  return exec('runuser', ['-u', siteUser(id), '--', 'sh', '-c', command], {
+  return exec(RUNUSER, ['-u', siteUser(id), '--', 'sh', '-c', command], {
     ...opts,
     cwd,
     env: {

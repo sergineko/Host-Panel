@@ -102,10 +102,16 @@ update_caddy() {
   (cd "$APP_DIR/panel/api" && node --disable-warning=ExperimentalWarning src/cli.ts sync-proxy) || true
 }
 
+# Stalwart 1.0 changed its settings and database layout (no in-place upgrade): stay on 0.16.
+STALWART_VERSION=v0.16.27
+
 update_stalwart() {
   [[ -x /opt/stalwart/bin/stalwart ]] || { echo "Stalwart no está instalado: se omite."; return 0; }
   say "Stalwart Mail"
-  curl -fsSL --retry 3 --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/latest/download/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz
+  local current
+  current=$(/opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+  if [[ $current == "${STALWART_VERSION#v}" ]]; then echo "Ya está en la versión compatible más reciente (${current})."; return 0; fi
+  curl -fsSL --retry 3 --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/download/${STALWART_VERSION}/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz
   rm -rf /tmp/stalwart.new && mkdir -p /tmp/stalwart.new
   tar -xzf /tmp/stalwart.tgz -C /tmp/stalwart.new
   local bin=/tmp/stalwart.new/stalwart
