@@ -35,6 +35,8 @@ Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); h
 
 ## Instalar
 
+Guía paso a paso (servidor, asistente, registrador y proveedor del VPS): **[Manual de instalación](INSTALL.md)**.
+
 Servidor limpio con **Ubuntu 22.04 / 24.04** o **Debian 12 / 13** (x86_64 o arm64), 2 GB de RAM recomendados:
 
 ```bash
