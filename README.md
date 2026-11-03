@@ -25,6 +25,10 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Almacenamiento** de objetos: buckets con dominio propio, CDN, CORS y API con tokens
 - **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
 - **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
+- **Solo PHP con PHP2Shell corregido** (CVE-2026-109618 y CVE-2026-109619): instalador y panel rechazan versiones anteriores a
+  8.2.35 / 8.3.36 / 8.4.27 / 8.5.12, salvo paquetes de la distribución que incluyan el parche (lo indica su changelog).
+  PHP 7.4, 8.0 y 8.1 solo se aceptan con ese parche. Las versiones vulnerables ya instaladas se marcan con un botón
+  **Actualizar** y no se pueden asignar a sitios nuevos. `session.upload_progress` queda desactivado (CVE-2026-115560)
 - **Varias versiones de Node.js** a la vez: cada sitio elige una versión exacta, la última de una rama (`22.x`), la del sistema o **«siempre la última instalada»**
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
 - **Asistente de primer arranque**: cuenta de administrador segura, 2FA, dominio principal (DNS, nameservers, correo) y zona horaria
@@ -38,7 +42,9 @@ Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); h
 
 Guía paso a paso (servidor, asistente, registrador y proveedor del VPS): **[Manual de instalación](INSTALL.md)**.
 
-Servidor limpio con **Ubuntu 22.04 / 24.04** o **Debian 12 / 13** (x86_64 o arm64), 2 GB de RAM recomendados:
+Servidor limpio con **Ubuntu 22.04 o posterior** (mejor una LTS: 24.04, 26.04…) o **Debian 12 o posterior** (x86_64 o arm64),
+2 GB de RAM recomendados. En versiones para las que el repositorio de PHP de Ondřej Surý aún no publica paquetes, se usa el
+PHP de la propia distribución (y no se pueden instalar otras versiones desde el panel).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
@@ -350,7 +356,7 @@ en `127.0.0.1` o en sockets unix.
 
 ## Varios servidores y balanceo de carga
 
-1. **Servidores → Añadir servidor** muestra un comando; ejecútalo como root en un VPS limpio (Ubuntu 22.04/24.04 o Debian 12/13).
+1. **Servidores → Añadir servidor** muestra un comando; ejecútalo como root en un VPS limpio (Ubuntu 22.04 o posterior, o Debian 12 o posterior).
    Instala Caddy, PHP y Node.js, autoriza la clave SSH del panel y abre el puerto 8443 solo para la IP del panel.
 2. Añade el VPS con su IP y pulsa **Comprobar**.
 3. En la configuración de cada sitio elige en qué servidores se ejecuta. El código se compila en el panel y se copia a

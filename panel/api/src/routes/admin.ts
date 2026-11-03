@@ -13,8 +13,10 @@ import {
   removePhp,
   setDefaultPhpVersion,
   SUPPORTED_PHP,
+  upgradePhp,
 } from '../services/php.ts';
 import { autoUpdateMode, checkUpdates, isValidComponent, runUpdate } from '../services/updates.ts';
+import { checkAllPhp, PHP2SHELL_CVES, PHP2SHELL_FIXED, phpSecurity } from '../services/phpsecurity.ts';
 
 const phpVersion = z.object({ version: z.enum(SUPPORTED_PHP) });
 
@@ -32,11 +34,27 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get('/api/php', async () => {
     const installed = installedPhpVersions();
     const usage = phpUsage();
+    await checkAllPhp(installed.filter((v) => !phpSecurity(v)));
     return {
       default: defaultPhpVersion(),
-      versions: SUPPORTED_PHP.map((v) => ({ version: v, installed: installed.includes(v), sites: usage[v] ?? 0 })),
+      versions: SUPPORTED_PHP.map((v) => ({
+        version: v,
+        installed: installed.includes(v),
+        sites: usage[v] ?? 0,
+        security: installed.includes(v) ? phpSecurity(v) : null,
+        fixed_in: PHP2SHELL_FIXED[v] ?? null,
+      })),
+      php2shell: { cves: PHP2SHELL_CVES },
       job: runningJob('php') ?? null,
     };
+  });
+
+  app.post('/api/php/upgrade', async (req) => {
+    const { version } = parse(phpVersion, req.body);
+    if (!installedPhpVersions().includes(version)) throw badRequest(`PHP ${version} no está instalado`);
+    if (runningJob('php')) throw badRequest('Hay otra operación de PHP en curso');
+    audit(req.user!.username, 'php.upgrade', version, req.ip);
+    return { job_id: startJob('php', `Actualizar PHP ${version}`, req.user!.username, (log) => upgradePhp(version, log)) };
   });
 
   app.post('/api/php/install', async (req) => {
@@ -58,6 +76,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.put('/api/php/default', async (req) => {
     const { version } = parse(phpVersion, req.body);
+    if (phpSecurity(version) && !phpSecurity(version)!.patched) throw badRequest(`PHP ${version} no tiene corregido PHP2Shell: actualízalo antes de usarlo por defecto`);
     try {
       setDefaultPhpVersion(version);
     } catch (err) {

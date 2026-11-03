@@ -158,7 +158,7 @@ function AddServer({ open, onClose }: { open: boolean; onClose: () => void }) {
         <li>
           <div className="mb-1 font-medium">1. Prepara el VPS</div>
           <p className="mb-2 text-[13px] text-muted">
-            En un VPS limpio (Ubuntu 22.04/24.04 o Debian 12/13) ejecuta como root. Instala Caddy, PHP y Node.js, autoriza la clave del panel y abre el puerto 8443 solo para este servidor.
+            En un VPS limpio (Ubuntu 22.04 o posterior, o Debian 12 o posterior) ejecuta como root. Instala Caddy, PHP y Node.js, autoriza la clave del panel y abre el puerto 8443 solo para este servidor.
           </p>
           {setup.isLoading ? <Spinner className="py-3" /> : setup.data && <Copyable value={setup.data.command} />}
         </li>

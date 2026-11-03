@@ -58,7 +58,7 @@ const lbPolicies = [
 /** Where the site runs: this server and/or remote VPS, plus PHP version and balancing. */
 function Placement({ value, set, localOnly }: { value: SiteFormValue; set: <K extends keyof SiteFormValue>(k: K, v: SiteFormValue[K]) => void; localOnly?: boolean }) {
   const servers = useQuery({ queryKey: ['servers'], queryFn: () => api.get<{ local: ServerNode; servers: ServerNode[] }>('/api/servers') });
-  const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean }[] }>('/api/php'), enabled: value.type === 'php' });
+  const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean; security: { patched: boolean } | null }[] }>('/api/php'), enabled: value.type === 'php' });
   const all = servers.data ? [servers.data.local, ...servers.data.servers] : [];
   const toggle = (id: number) => {
     const has = value.server_ids.includes(id);
@@ -117,7 +117,8 @@ function Placement({ value, set, localOnly }: { value: SiteFormValue; set: <K ex
             <Select value={value.php_version} onChange={(e) => set('php_version', e.target.value)}>
               <option value="">Por defecto del servidor{php.data ? ` (PHP ${php.data.default})` : ''}</option>
               {php.data?.versions
-                .filter((v) => v.installed)
+                // Only builds with the PHP2Shell fix can be chosen.
+                .filter((v) => v.installed && v.security?.patched !== false)
                 .map((v) => (
                   <option key={v.version} value={v.version}>
                     PHP {v.version}

@@ -16,7 +16,7 @@
 #    --keep-code              No descarga código nuevo (para cambiar solo la configuración,
 #                             por ejemplo el dominio principal desde el panel)       HP_KEEP_CODE=1
 #
-#  Sistemas soportados: Ubuntu 22.04 / 24.04, Debian 12 / 13 (x86_64 o arm64).
+#  Sistemas soportados: Ubuntu 22.04 o posterior y Debian 12 o posterior (x86_64 o arm64).
 # =====================================================================================
 set -Eeuo pipefail
 
@@ -83,6 +83,90 @@ render() {
   printf '%s\n' "$content" >"$2"
 }
 
+# --- operating system ----------------------------------------------------------------
+# Any Ubuntu from 22.04 or Debian from 12, newer releases included. Sets CODENAME.
+check_os() {
+  [[ -r /etc/os-release ]] || die "Sistema operativo no soportado."
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  CODENAME=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}
+  local version=${VERSION_ID:-} major minor
+  major=${version%%.*} minor=${version#*.}
+  case ${ID:-} in
+    ubuntu)
+      [[ ${VERSION_ID:-} =~ ^[0-9]+\.[0-9]+$ ]] || die "No se pudo leer la versión de Ubuntu (${VERSION_ID:-?})."
+      (( major >= 22 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Ubuntu 22.04 o posterior."
+      # LTS = even year, April release (22.04, 24.04, 26.04…).
+      if (( major % 2 )) || [[ $minor != 04 ]]; then
+        warn "$PRETTY_NAME no es una versión LTS: funciona, pero para producción se recomienda una LTS."
+      fi
+      ;;
+    debian)
+      if [[ -z ${VERSION_ID:-} ]]; then
+        warn "Debian en pruebas ($CODENAME): no está probado, pero se intenta la instalación."
+      else
+        (( major >= 12 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Debian 12 o posterior."
+      fi
+      ;;
+    *) die "Sistema no soportado: ${PRETTY_NAME:-desconocido}. Usa Ubuntu (22.04 o posterior) o Debian (12 o posterior)." ;;
+  esac
+  [[ -n $CODENAME ]] || die "No se pudo detectar el nombre de la versión de $PRETTY_NAME."
+  ok "$PRETTY_NAME"
+}
+
+# Repository with every maintained PHP version (Ondřej Surý). It only publishes packages for some
+# releases (Ubuntu LTS, current Debian stable…): elsewhere the distribution's own PHP is used.
+# Uses and may change PHP_VERSION; sets PHP_REPO=1 when the repository is in use.
+setup_php_repo() {
+  PHP_REPO=0
+  if [[ $ID == ubuntu ]]; then
+    apt_install software-properties-common
+    if q add-apt-repository -y ppa:ondrej/php && q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+      PHP_REPO=1
+    else
+      q add-apt-repository -y -r ppa:ondrej/php || true
+      rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php*
+    fi
+  else
+    if curl -fsS -o /dev/null --max-time 15 "https://packages.sury.org/php/dists/$CODENAME/Release" \
+      && curl -fsSL --max-time 30 https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg; then
+      echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $CODENAME main" >/etc/apt/sources.list.d/sury-php.list
+      if q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then PHP_REPO=1; fi
+    fi
+    [[ $PHP_REPO == 1 ]] || rm -f /etc/apt/sources.list.d/sury-php.list
+  fi
+  q apt-get update
+  if [[ $PHP_REPO == 0 ]] && ! apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+    local distro
+    distro=$(apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+    [[ -n $distro ]] || die "No hay paquetes de PHP disponibles para $PRETTY_NAME."
+    warn "El repositorio de PHP no publica paquetes para $PRETTY_NAME: se usa PHP $distro de la distribución."
+    PHP_VERSION=$distro
+  fi
+}
+
+# PHP2Shell (CVE-2026-109618 / CVE-2026-109619, remote code execution, fixed 21-10-2026): only
+# builds with the fix are accepted. Fixed if the upstream version is at least the fixed release
+# of its branch, or if the Debian/Ubuntu changelog lists both CVEs (backported fix).
+php2shell_fixed() {
+  local v=$1 full fixed log=''
+  full=$("php$v" -r 'echo PHP_VERSION;' 2>/dev/null | tail -n 1 | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+  case $v in 8.2) fixed=8.2.35 ;; 8.3) fixed=8.3.36 ;; 8.4) fixed=8.4.27 ;; 8.5) fixed=8.5.12 ;; *) fixed='' ;; esac
+  if [[ -n $full && -n $fixed ]] && [[ $(printf '%s\n%s\n' "$fixed" "$full" | sort -V | head -n 1) == "$fixed" ]]; then
+    PHP2SHELL_DETAIL="PHP $full"
+    return 0
+  fi
+  for f in "/usr/share/doc/php$v-common/changelog.Debian.gz" "/usr/share/doc/php$v-fpm/changelog.Debian.gz"; do
+    [[ -f $f ]] && log=$(zcat "$f" 2>/dev/null || true) && break
+  done
+  if grep -q 'CVE-2026-109618' <<<"$log" && grep -q 'CVE-2026-109619' <<<"$log"; then
+    PHP2SHELL_DETAIL="PHP ${full:-$v} con el parche de la distribución"
+    return 0
+  fi
+  PHP2SHELL_DETAIL="PHP ${full:-$v}"
+  return 1
+}
+
 has_module() { local mods; mods=$(/usr/local/bin/caddy list-modules 2>/dev/null || true); grep -qx "$1" <<<"$mods"; }
 
 # --- arguments -----------------------------------------------------------------------
@@ -103,13 +187,7 @@ printf '\n%s%s  HostPanel%s — instalación nativa (sin Docker)\n' "$O" "$B" "$
 step "Comprobando el sistema"
 if [[ $EUID -ne 0 ]]; then echo "Ejecuta el instalador como root (sudo)." >&2; exit 1; fi
 mkdir -p "$(dirname "$INSTALL_LOG")"; : >"$INSTALL_LOG"
-[[ -r /etc/os-release ]] || die "Sistema operativo no soportado."
-# shellcheck disable=SC1091
-. /etc/os-release
-case "$ID:$VERSION_ID" in
-  ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ok "$PRETTY_NAME" ;;
-  *) die "Sistema no soportado: ${PRETTY_NAME:-desconocido}. Usa Ubuntu 22.04/24.04 o Debian 12/13." ;;
-esac
+check_os
 case "$(uname -m)" in
   x86_64) ARCH=amd64; STALWART_TRIPLE=x86_64-unknown-linux-gnu ;;
   aarch64|arm64) ARCH=arm64; STALWART_TRIPLE=aarch64-unknown-linux-gnu ;;
@@ -184,7 +262,7 @@ step "Paquetes base"
 export DEBIAN_FRONTEND=noninteractive
 q apt-get update
 apt_install ca-certificates curl gnupg git acl ufw openssl sqlite3 unzip tar rsync jq cron logrotate iproute2 procps \
-  openssh-client lsb-release fail2ban
+  openssh-client fail2ban python3-systemd
 ok "Paquetes base instalados"
 
 # Network performance: BBR congestion control, bigger queues, TCP Fast Open.
@@ -292,19 +370,17 @@ ok "MariaDB $(mariadb --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 ||
 
 # =====================================================================================
 step "PHP (varias versiones disponibles)"
-# Repository with every maintained PHP version (Ondřej Surý), so the panel can install more.
-if [[ $ID == ubuntu ]]; then
-  apt_install software-properties-common
-  q add-apt-repository -y ppa:ondrej/php
-else
-  curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
-  echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" >/etc/apt/sources.list.d/sury-php.list
-fi
-q apt-get update
 PHP_VERSION=${HP_PHP_VERSION:-$DEFAULT_PHP}
+setup_php_repo
 PHP_PKGS=()
 for ext in fpm cli mysql sqlite3 gd intl mbstring xml zip curl bcmath opcache readline; do PHP_PKGS+=("php${PHP_VERSION}-${ext}"); done
 apt_install "${PHP_PKGS[@]}"
+if ! php2shell_fixed "$PHP_VERSION"; then
+  die "$PHP2SHELL_DETAIL no tiene corregida la vulnerabilidad PHP2Shell (CVE-2026-109618 y CVE-2026-109619). \
+Los paquetes de PHP disponibles para $PRETTY_NAME aún no incluyen el parche: espera a que tu distribución lo publique \
+o usa una versión con el repositorio de Ondřej Surý (Ubuntu LTS o Debian estable)."
+fi
+ok "$PHP2SHELL_DETAIL: PHP2Shell corregido"
 for opt in imagick redis apcu; do apt_install "php${PHP_VERSION}-${opt}" || true; done
 apt_install composer || warn "composer no disponible en los repositorios"
 # WP-CLI: one-click WordPress installs from the panel.
@@ -329,6 +405,8 @@ opcache.revalidate_freq=2
 realpath_cache_size=4096K
 realpath_cache_ttl=600
 expose_php=Off
+; PHP2Shell follow-up (CVE-2026-115560): upload progress tracking stays off.
+session.upload_progress.enabled=0
 EOF
 done
 rm -f "/etc/php/$PHP_VERSION/fpm/pool.d/www.conf"
@@ -336,7 +414,7 @@ printf '; Generated by HostPanel: keeps FPM running when no site uses this versi
   >"/etc/php/$PHP_VERSION/fpm/pool.d/hp-idle.conf"
 q systemctl enable --now "php${PHP_VERSION}-fpm"
 q systemctl restart "php${PHP_VERSION}-fpm"
-ok "PHP $PHP_VERSION (más versiones desde el panel: Sistema → PHP)"
+if [[ $PHP_REPO == 1 ]]; then ok "PHP $PHP_VERSION (más versiones desde el panel: Sistema → PHP)"; else ok "PHP $PHP_VERSION de la distribución"; fi
 
 # =====================================================================================
 step "PowerDNS (DNS autoritativo)"

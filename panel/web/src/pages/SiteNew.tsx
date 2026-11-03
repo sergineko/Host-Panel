@@ -74,7 +74,7 @@ function newPassword() {
 function WordPressForm({ host }: { host: string | null }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean }[] }>('/api/php') });
+  const php = useQuery({ queryKey: ['php'], queryFn: () => api.get<{ default: string; versions: { version: string; installed: boolean; security: { patched: boolean } | null }[] }>('/api/php') });
   const [showPw, setShowPw] = useState(false);
   const [v, setV] = useState({
     name: host ?? '',
@@ -162,7 +162,8 @@ function WordPressForm({ host }: { host: string | null }) {
           <Select value={v.php_version} onChange={(e) => set('php_version', e.target.value)}>
             <option value="">Por defecto del servidor{php.data ? ` (PHP ${php.data.default})` : ''}</option>
             {php.data?.versions
-              .filter((x) => x.installed)
+              // Only builds with the PHP2Shell fix can be chosen.
+                .filter((x) => x.installed && x.security?.patched !== false)
               .map((x) => (
                 <option key={x.version} value={x.version}>
                   PHP {x.version}

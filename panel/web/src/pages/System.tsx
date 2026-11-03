@@ -2,16 +2,24 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowUpCircle, CheckCircle2, Download, RefreshCw, Star, Trash2 } from 'lucide-react';
+import { ArrowUpCircle, CheckCircle2, Download, RefreshCw, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import { api, type Job } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { JobLog } from '../components/JobLog';
 import { NodeVersions } from '../components/NodeVersions';
-import { Badge, Button, Card, ConfirmButton, ErrorBox, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Td, cx } from '../components/ui';
+import { Badge, Button, Callout, Card, ConfirmButton, ErrorBox, PageHeader, Select, Spinner, StatusBadge, Table, Tabs, Td, cx } from '../components/ui';
 
 interface PhpState {
   default: string;
-  versions: { version: string; installed: boolean; sites: number }[];
+  versions: {
+    version: string;
+    installed: boolean;
+    sites: number;
+    /** PHP2Shell status of the installed build. */
+    security: { version: string; patched: boolean; via: 'version' | 'backport' | null } | null;
+    fixed_in: string | null;
+  }[];
+  php2shell: { cves: string[] };
   job: Job | null;
 }
 interface Component {
@@ -50,6 +58,14 @@ function PhpVersions() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const upgrade = useMutation({
+    mutationFn: (version: string) => api.post<{ job_id: number }>('/api/php/upgrade', { version }),
+    onSuccess: (r) => {
+      setJobId(r.job_id);
+      setJobRunning(true);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const setDefault = useMutation({
     mutationFn: (version: string) => api.put('/api/php/default', { version }),
     onSuccess: () => {
@@ -64,8 +80,16 @@ function PhpVersions() {
   const busy = (!!q.data!.job && jobId === null) || jobRunning || install.isPending;
   const activeJob = jobId ?? q.data!.job?.id ?? null;
 
+  const vulnerable = q.data!.versions.filter((v) => v.security && !v.security.patched);
+
   return (
     <div className="space-y-4">
+      {vulnerable.length > 0 && (
+        <Callout tone="danger" title={`PHP ${vulnerable.map((v) => v.version).join(', ')} sin el parche de PHP2Shell`}>
+          Vulnerabilidad crítica de ejecución remota de código ({q.data!.php2shell.cves.join(', ')}). Pulsa <strong>Actualizar</strong> en la versión afectada. Mientras
+          tanto no se puede asignar a sitios nuevos ni usar por defecto.
+        </Callout>
+      )}
       <Card padded={false} title="Versiones de PHP" actions={<span className="text-xs text-muted">Cada sitio PHP elige su versión en Configuración</span>}>
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           {q.data!.versions.map((v) => {
@@ -77,8 +101,15 @@ function PhpVersions() {
                   {isDefault ? <Badge tone="accent">Por defecto</Badge> : v.installed ? <Badge tone="ok" dot>Instalado</Badge> : <Badge>No instalado</Badge>}
                 </div>
                 <div className="text-[13px] text-muted">
-                  {v.installed ? (v.sites ? `${v.sites} sitio${v.sites === 1 ? '' : 's'} lo usa${v.sites === 1 ? '' : 'n'}` : 'Sin sitios') : ['7.4', '8.0'].includes(v.version) ? 'Sin soporte oficial: solo para webs antiguas' : 'Disponible para instalar'}
+                  {v.installed ? (v.sites ? `${v.sites} sitio${v.sites === 1 ? '' : 's'} lo usa${v.sites === 1 ? '' : 'n'}` : 'Sin sitios') : v.fixed_in ? 'Disponible para instalar' : 'Sin versión oficial corregida: solo se instala si el paquete trae el parche'}
                 </div>
+                {v.security && (
+                  <div className={cx('flex items-center gap-1.5 text-xs', v.security.patched ? 'text-ok' : 'text-danger')}>
+                    {v.security.patched ? <ShieldCheck className="size-3.5" /> : <ShieldAlert className="size-3.5" />}
+                    <span className="font-mono">{v.security.version || v.version}</span>
+                    {v.security.patched ? (v.security.via === 'backport' ? '· parche de la distribución' : '· PHP2Shell corregido') : `· vulnerable${v.fixed_in ? ` (corregido en ${v.fixed_in})` : ''}`}
+                  </div>
+                )}
                 <div className="mt-auto flex gap-1.5">
                   {!v.installed ? (
                     <Button size="sm" icon={<Download className="size-3.5" />} disabled={busy} loading={install.isPending && install.variables === v.version} onClick={() => install.mutate(v.version)}>
@@ -86,7 +117,12 @@ function PhpVersions() {
                     </Button>
                   ) : (
                     <>
-                      {!isDefault && (
+                      {v.security && !v.security.patched && (
+                        <Button size="sm" variant="primary" icon={<ArrowUpCircle className="size-3.5" />} disabled={busy} loading={upgrade.isPending && upgrade.variables === v.version} onClick={() => upgrade.mutate(v.version)}>
+                          Actualizar
+                        </Button>
+                      )}
+                      {!isDefault && v.security?.patched !== false && (
                         <Button size="sm" icon={<Star className="size-3.5" />} onClick={() => setDefault.mutate(v.version)}>
                           Por defecto
                         </Button>

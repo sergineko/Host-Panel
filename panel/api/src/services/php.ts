@@ -7,6 +7,7 @@ import { config } from '../config.ts';
 import { all, getSetting, setSetting } from '../db.ts';
 import { exec, tryExec } from '../lib/exec.ts';
 import type { JobLog } from './jobs.ts';
+import { checkPhp, PHP2SHELL_CVES } from './phpsecurity.ts';
 
 export const SUPPORTED_PHP = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5'] as const;
 export const PHP_EXTENSIONS = ['cli', 'fpm', 'mysql', 'sqlite3', 'gd', 'intl', 'mbstring', 'xml', 'zip', 'curl', 'bcmath', 'opcache', 'readline'];
@@ -79,7 +80,51 @@ opcache.revalidate_freq=2
 realpath_cache_size=4096K
 realpath_cache_ttl=600
 expose_php=Off
+; PHP2Shell follow-up (CVE-2026-115560): upload progress tracking stays off.
+session.upload_progress.enabled=0
 `;
+
+const HARDENING_MARK = 'session.upload_progress.enabled=0';
+
+async function writeTuning(v: string) {
+  const { writeFile } = await import('node:fs/promises');
+  for (const sapi of ['fpm', 'cli']) {
+    const dir = `/etc/php/${v}/${sapi}/conf.d`;
+    if (existsSync(dir)) await writeFile(`${dir}/99-hostpanel.ini`, TUNING_INI);
+  }
+}
+
+/** Start-up: versions installed before the hardening get the current settings. */
+export async function ensurePhpHardening() {
+  if (config.dev) return;
+  const { readFile } = await import('node:fs/promises');
+  for (const v of installedPhpVersions()) {
+    const ini = await readFile(`/etc/php/${v}/fpm/conf.d/99-hostpanel.ini`, 'utf8').catch(() => '');
+    if (ini.includes(HARDENING_MARK)) continue;
+    await writeTuning(v);
+    await tryExec('systemctl', ['reload', phpService(v)]);
+  }
+}
+
+/** Upstream version apt would install, e.g. "1:8.4.27-1+ubuntu24.04.1+deb.sury.org+1" → "8.4.27". */
+async function candidateVersion(v: string) {
+  const r = await tryExec('apt-cache', ['policy', `php${v}-fpm`]);
+  const m = /Candidate:\s*(?:\d+:)?([0-9.]+)/.exec(r.output);
+  return m?.[1] ?? '';
+}
+
+/** Refuses (and removes) a build without the PHP2Shell fix. */
+async function assertFixed(v: string, log: JobLog) {
+  const sec = await checkPhp(v);
+  if (sec.patched) {
+    log(`✔ PHP ${sec.version}: PHP2Shell corregido${sec.via === 'backport' ? ' (parche de la distribución)' : ''}`);
+    return;
+  }
+  log(`✖ PHP ${sec.version || v} no tiene corregido PHP2Shell (${PHP2SHELL_CVES.join(', ')}): se desinstala.`);
+  await tryExec('systemctl', ['disable', '--now', phpService(v)]);
+  await tryExec('apt-get', ['purge', '-y', `php${v}-*`], { env: APT_ENV });
+  throw new Error(`Los paquetes de PHP ${v} disponibles para este servidor no tienen corregida la vulnerabilidad PHP2Shell. Elige otra versión.`);
+}
 
 export async function installPhp(v: string, log: JobLog) {
   if (!SUPPORTED_PHP.includes(v as (typeof SUPPORTED_PHP)[number])) throw new Error(`Versión no soportada: ${v}`);
@@ -91,14 +136,16 @@ export async function installPhp(v: string, log: JobLog) {
   }
   log('$ apt-get update');
   await exec('apt-get', ['update'], { onLine: log, env: APT_ENV, timeoutMs: 5 * 60_000 });
+  const candidate = await candidateVersion(v);
+  if (!candidate) throw new Error(`No hay paquetes de PHP ${v} para este sistema`);
+  log(`Versión disponible: ${candidate}`);
   const pkgs = await packagesFor(v);
   log(`$ apt-get install ${pkgs.join(' ')}`);
   await exec('apt-get', ['install', ...APT_OPTS, ...pkgs], { onLine: log, env: APT_ENV, timeoutMs: 20 * 60_000 });
+  // Older branches or distribution builds may only carry the fix as a backport: check what got installed.
+  await assertFixed(v, log);
   const { writeFile } = await import('node:fs/promises');
-  for (const sapi of ['fpm', 'cli']) {
-    const dir = `/etc/php/${v}/${sapi}/conf.d`;
-    if (existsSync(dir)) await writeFile(`${dir}/99-hostpanel.ini`, TUNING_INI);
-  }
+  await writeTuning(v);
   // The distro's default "www" pool is not used; HostPanel creates one pool per site.
   await tryExec('rm', ['-f', `${phpPoolDir(v)}/www.conf`]);
   // FPM refuses to start with zero pools: keep a tiny idle pool.
@@ -109,6 +156,28 @@ export async function installPhp(v: string, log: JobLog) {
   await exec('systemctl', ['enable', '--now', phpService(v)], { onLine: log });
   await exec('systemctl', ['restart', phpService(v)], { onLine: log });
   log(`✔ PHP ${v} instalado y en marcha`);
+}
+
+/** Brings an installed version up to the latest packaged build (e.g. to get the PHP2Shell fix). */
+export async function upgradePhp(v: string, log: JobLog) {
+  if (!installedPhpVersions().includes(v)) throw new Error(`PHP ${v} no está instalado`);
+  if (config.dev) {
+    log(`[dev] apt-get install --only-upgrade php${v}-*`);
+    await new Promise((r) => setTimeout(r, 1200));
+    await checkPhp(v);
+    return;
+  }
+  log('$ apt-get update');
+  await exec('apt-get', ['update'], { onLine: log, env: APT_ENV, timeoutMs: 5 * 60_000 });
+  const list = await tryExec('dpkg-query', ['-W', '-f=${Package}\n', `php${v}-*`]);
+  const pkgs = list.output.split('\n').map((x) => x.trim()).filter((x) => /^php\d+\.\d+-[a-z0-9-]+$/.test(x));
+  log(`$ apt-get install --only-upgrade ${pkgs.join(' ')}`);
+  await exec('apt-get', ['install', '--only-upgrade', ...APT_OPTS, ...pkgs], { onLine: log, env: APT_ENV, timeoutMs: 20 * 60_000 });
+  await writeTuning(v);
+  await exec('systemctl', ['restart', phpService(v)], { onLine: log });
+  const sec = await checkPhp(v);
+  if (sec.patched) log(`✔ PHP ${sec.version}: PHP2Shell corregido`);
+  else throw new Error(`PHP ${v} sigue sin el parche de PHP2Shell (versión ${sec.version}). Tu repositorio aún no publica la corrección: cambia los sitios a otra versión.`);
 }
 
 export async function removePhp(v: string, log: JobLog) {

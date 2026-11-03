@@ -8,6 +8,8 @@ import { accessPlugin } from './access.ts';
 import clientRoutes from './routes/clients.ts';
 import licenseRoutes from './routes/license.ts';
 import { ensureSetupState } from './services/setup.ts';
+import { ensurePhpHardening, installedPhpVersions } from './services/php.ts';
+import { checkAllPhp } from './services/phpsecurity.ts';
 import setupRoutes from './routes/setup.ts';
 import { HttpError } from './lib/validate.ts';
 import { startAnalytics } from './services/analytics.ts';
@@ -109,6 +111,9 @@ app.addHook('onSend', async (_req, reply) => {
 });
 
 ensureSetupState();
+// PHP2Shell: which installed PHP builds carry the fix; settings hardening for older installs.
+checkAllPhp(installedPhpVersions()).catch((err) => console.error('PHP:', err.message));
+ensurePhpHardening().catch((err) => console.error('PHP:', err.message));
 recoverInterruptedDeployments();
 recoverJobs();
 startServerHealth();

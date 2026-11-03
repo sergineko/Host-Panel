@@ -8,7 +8,7 @@ Necesitas:
 
 | Qué | Detalle |
 |---|---|
-| Un servidor limpio (VPS) | **Ubuntu 22.04 o 24.04** (también Debian 12 / 13), x86_64 o arm64 |
+| Un servidor limpio (VPS) | **Ubuntu 22.04 o posterior** (recomendada una LTS: 24.04, 26.04…) o **Debian 12 o posterior**, x86_64 o arm64 |
 | Memoria | 2 GB de RAM recomendados (funciona con 1 GB, más justo) |
 | Acceso | Por SSH como `root` o con un usuario con `sudo` |
 | Un dominio | Registrado a tu nombre, por ejemplo `miempresa.com`, con acceso al panel del registrador |

@@ -5,7 +5,7 @@ rate limiting, modo "bajo ataque", analítica). Instalación **nativa** (sin Doc
 **un comando para instalar** y **otro para desinstalar**.
 
 ```bash
-# Instalar (Ubuntu 22.04/24.04 o Debian 12, como root)
+# Instalar (Ubuntu 22.04+ o Debian 12+, como root)
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
 
 # Desinstalar

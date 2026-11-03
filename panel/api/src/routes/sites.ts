@@ -6,7 +6,7 @@ import { encrypt, randomPassword, randomToken } from '../lib/crypto.ts';
 import { badRequest, hostname, idParam, matchDomain, notFound, parse } from '../lib/validate.ts';
 import { syncCaddy } from '../services/caddy.ts';
 import { deploymentLog, enqueueDeploy, releasesOnDisk, removeSiteFromNode } from '../services/deploy.ts';
-import { installedPhpVersions, sitePhpVersion } from '../services/php.ts';
+import { defaultPhpVersion, installedPhpVersions, sitePhpVersion } from '../services/php.ts';
 import { describeSpec, NODE_SPEC_RE, resolveNode } from '../services/nodejs.ts';
 import { LOCAL_SERVER_ID, remoteScript, siteServerIds } from '../services/servers.ts';
 import { removeSftpUser } from '../services/sftp.ts';
@@ -19,6 +19,7 @@ import { resetWordPressPassword, setPendingAdminPassword, WP_LOCALES, wpApp, typ
 import type { DatabaseRow } from '../db.ts';
 import { forgetStaging } from '../services/wptoolkit.ts';
 import { scopeOf } from '../access.ts';
+import { PHP2SHELL_MESSAGE, phpAllowed } from '../services/phpsecurity.ts';
 
 const wordpressInput = z.object({
   name: z.string().trim().min(1).max(80),
@@ -73,12 +74,17 @@ const siteInput = z.object({
   node_version: z.string().trim().regex(NODE_SPEC_RE, 'Versión de Node.js no válida').default('latest'),
 });
 
-function validateTargets(body: { php_version: string; server_ids: number[]; type: string; node_version?: string }) {
+function validateTargets(body: { php_version: string; server_ids: number[]; type: string; node_version?: string }, isNew = false) {
   if (body.type === 'node' && body.node_version && !resolveNode(body.node_version)) {
     throw badRequest(`${describeSpec(body.node_version)}: no hay ninguna instalada en este servidor (Sistema → Node.js)`);
   }
   if (body.php_version && !installedPhpVersions().includes(body.php_version)) {
     throw badRequest(`PHP ${body.php_version} no está instalado en este servidor (instálalo en Sistema → PHP)`);
+  }
+  // Only builds with the PHP2Shell fix. A new site without a version uses the default one.
+  if (body.type === 'php') {
+    const v = body.php_version || (isNew ? defaultPhpVersion() : '');
+    if (v && !phpAllowed(v)) throw badRequest(PHP2SHELL_MESSAGE(v));
   }
   const remote = body.server_ids.filter((id) => id !== LOCAL_SERVER_ID);
   if (remote.length) {
@@ -156,7 +162,7 @@ export default async function siteRoutes(app: FastifyInstance) {
   app.post('/api/sites/wordpress', async (req) => {
     const body = parse(wordpressInput, req.body);
     assertHostsFree(body.hostnames);
-    validateTargets({ php_version: body.php_version, server_ids: [LOCAL_SERVER_ID], type: 'php' });
+    validateTargets({ php_version: body.php_version, server_ids: [LOCAL_SERVER_ID], type: 'php' }, true);
     const domain = matchDomain(body.hostnames[0]!, all<DomainRow>('SELECT * FROM domains'));
     const { id } = run(
       `INSERT INTO sites (name, domain_id, hostnames, type, webhook_secret, auto_deploy, php_version, source)
@@ -220,7 +226,7 @@ export default async function siteRoutes(app: FastifyInstance) {
   app.post('/api/sites', async (req) => {
     const body = parse(siteInput, req.body);
     assertHostsFree(body.hostnames);
-    validateTargets(body);
+    validateTargets(body, true);
     const domain = matchDomain(body.hostnames[0]!, all<DomainRow>('SELECT * FROM domains'));
     const { id } = run(
       `INSERT INTO sites (name, domain_id, hostnames, type, spa, repo_url, branch, repo_token, install_command, build_command,

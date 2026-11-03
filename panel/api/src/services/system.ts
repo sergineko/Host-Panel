@@ -198,6 +198,7 @@ php_admin_value[error_log] = ${tmp}/php-error.log
 php_value[date.timezone] = ${ini.timezone.replace(/[^\w/+-]/g, '')}
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec
 php_admin_flag[expose_php] = off
+php_admin_flag[session.upload_progress.enabled] = off
 ${envLines}
 `;
 }

@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; R=$'\e[31m'; O=$'\e[38;5;208m'; N=$'\e[0m'; else B='' G='' R='' O='' N=''; fi
+if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; O=$'\e[38;5;208m'; N=$'\e[0m'; else B='' G='' Y='' R='' O='' N=''; fi
 step() { printf '\n%s▶%s %s%s%s\n' "$O" "$N" "$B" "$*" "$N"; }
 ok() { printf '  %s✔%s %s\n' "$G" "$N" "$*"; }
 die() { printf '\n%s✖ %s%s\n' "$R" "$*" "$N" >&2; tail -n 15 "$LOG" 2>/dev/null | sed 's/^/    /' >&2; exit 1; }
@@ -39,6 +39,91 @@ trap 'die "Error en la línea $LINENO: $BASH_COMMAND"' ERR
 q() { "$@" >>"$LOG" 2>&1; }
 export DEBIAN_FRONTEND=noninteractive
 apt_install() { q apt-get install -y --no-install-recommends -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+
+# PHP2Shell (CVE-2026-109618 / CVE-2026-109619, remote code execution, fixed 21-10-2026): only
+# builds with the fix are accepted. Fixed if the upstream version is at least the fixed release
+# of its branch, or if the Debian/Ubuntu changelog lists both CVEs (backported fix).
+php2shell_fixed() {
+  local v=$1 full fixed log=''
+  full=$("php$v" -r 'echo PHP_VERSION;' 2>/dev/null | tail -n 1 | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)
+  case $v in 8.2) fixed=8.2.35 ;; 8.3) fixed=8.3.36 ;; 8.4) fixed=8.4.27 ;; 8.5) fixed=8.5.12 ;; *) fixed='' ;; esac
+  if [[ -n $full && -n $fixed ]] && [[ $(printf '%s\n%s\n' "$fixed" "$full" | sort -V | head -n 1) == "$fixed" ]]; then
+    PHP2SHELL_DETAIL="PHP $full"
+    return 0
+  fi
+  for f in "/usr/share/doc/php$v-common/changelog.Debian.gz" "/usr/share/doc/php$v-fpm/changelog.Debian.gz"; do
+    [[ -f $f ]] && log=$(zcat "$f" 2>/dev/null || true) && break
+  done
+  if grep -q 'CVE-2026-109618' <<<"$log" && grep -q 'CVE-2026-109619' <<<"$log"; then
+    PHP2SHELL_DETAIL="PHP ${full:-$v} con el parche de la distribución"
+    return 0
+  fi
+  PHP2SHELL_DETAIL="PHP ${full:-$v}"
+  return 1
+}
+
+# --- operating system ----------------------------------------------------------------
+# Any Ubuntu from 22.04 or Debian from 12, newer releases included. Sets CODENAME.
+check_os() {
+  [[ -r /etc/os-release ]] || die "Sistema operativo no soportado."
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  CODENAME=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}
+  local version=${VERSION_ID:-} major minor
+  major=${version%%.*} minor=${version#*.}
+  case ${ID:-} in
+    ubuntu)
+      [[ ${VERSION_ID:-} =~ ^[0-9]+\.[0-9]+$ ]] || die "No se pudo leer la versión de Ubuntu (${VERSION_ID:-?})."
+      (( major >= 22 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Ubuntu 22.04 o posterior."
+      # LTS = even year, April release (22.04, 24.04, 26.04…).
+      if (( major % 2 )) || [[ $minor != 04 ]]; then
+        warn "$PRETTY_NAME no es una versión LTS: funciona, pero para producción se recomienda una LTS."
+      fi
+      ;;
+    debian)
+      if [[ -z ${VERSION_ID:-} ]]; then
+        warn "Debian en pruebas ($CODENAME): no está probado, pero se intenta la instalación."
+      else
+        (( major >= 12 )) || die "$PRETTY_NAME es demasiado antiguo. Usa Debian 12 o posterior."
+      fi
+      ;;
+    *) die "Sistema no soportado: ${PRETTY_NAME:-desconocido}. Usa Ubuntu (22.04 o posterior) o Debian (12 o posterior)." ;;
+  esac
+  [[ -n $CODENAME ]] || die "No se pudo detectar el nombre de la versión de $PRETTY_NAME."
+  ok "$PRETTY_NAME"
+}
+
+# Repository with every maintained PHP version (Ondřej Surý). It only publishes packages for some
+# releases (Ubuntu LTS, current Debian stable…): elsewhere the distribution's own PHP is used.
+# Uses and may change PHP_VERSION; sets PHP_REPO=1 when the repository is in use.
+setup_php_repo() {
+  PHP_REPO=0
+  if [[ $ID == ubuntu ]]; then
+    apt_install software-properties-common
+    if q add-apt-repository -y ppa:ondrej/php && q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+      PHP_REPO=1
+    else
+      q add-apt-repository -y -r ppa:ondrej/php || true
+      rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php*
+    fi
+  else
+    if curl -fsS -o /dev/null --max-time 15 "https://packages.sury.org/php/dists/$CODENAME/Release" \
+      && curl -fsSL --max-time 30 https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg; then
+      echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $CODENAME main" >/etc/apt/sources.list.d/sury-php.list
+      if q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then PHP_REPO=1; fi
+    fi
+    [[ $PHP_REPO == 1 ]] || rm -f /etc/apt/sources.list.d/sury-php.list
+  fi
+  q apt-get update
+  if [[ $PHP_REPO == 0 ]] && ! apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+    local distro
+    distro=$(apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+    [[ -n $distro ]] || die "No hay paquetes de PHP disponibles para $PRETTY_NAME."
+    warn "El repositorio de PHP no publica paquetes para $PRETTY_NAME: se usa PHP $distro de la distribución."
+    PHP_VERSION=$distro
+  fi
+}
 
 [[ $EUID -eq 0 ]] || { echo "Ejecuta como root (sudo)." >&2; exit 1; }
 : >"$LOG"
@@ -62,18 +147,14 @@ fi
 [[ $PANEL_IP =~ ^[0-9a-fA-F:.]+$ ]] || die "Falta --panel-ip (IP del servidor del panel)"
 [[ $PANEL_KEY == ssh-* ]] || die "Falta --key (clave pública SSH del panel)"
 
-. /etc/os-release
-case "$ID:$VERSION_ID" in
-  ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ok "$PRETTY_NAME" ;;
-  *) die "Sistema no soportado: ${PRETTY_NAME:-?}. Usa Ubuntu 22.04/24.04 o Debian 12/13." ;;
-esac
+check_os
 case "$(uname -m)" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) die "Arquitectura no soportada" ;; esac
 
 printf '\n%s%s  HostPanel%s — nodo de despliegue para el panel %s\n' "$O" "$B" "$N" "$PANEL_IP"
 
 step "Paquetes base"
 q apt-get update
-apt_install ca-certificates curl gnupg rsync acl ufw jq lsb-release
+apt_install ca-certificates curl gnupg rsync acl ufw jq
 ok "Listo"
 
 step "Clave SSH del panel"
@@ -85,17 +166,19 @@ grep -qF "$PANEL_KEY" /root/.ssh/authorized_keys || echo "$LINE" >>/root/.ssh/au
 ok "El panel puede conectarse desde $PANEL_IP"
 
 step "PHP $PHP_VERSION"
-if [[ $ID == ubuntu ]]; then
-  apt_install software-properties-common
-  q add-apt-repository -y ppa:ondrej/php
-else
-  curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
-  echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" >/etc/apt/sources.list.d/sury-php.list
+REQUESTED_PHP=$PHP_VERSION
+setup_php_repo
+if [[ $PHP_VERSION != "$REQUESTED_PHP" ]]; then
+  warn "Este nodo tendrá PHP $PHP_VERSION en lugar de $REQUESTED_PHP: los sitios que pidan otra versión no podrán desplegarse aquí."
 fi
-q apt-get update
 apt_install "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-gd" \
   "php${PHP_VERSION}-intl" "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-xml" "php${PHP_VERSION}-zip" "php${PHP_VERSION}-curl" \
   "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-opcache"
+php2shell_fixed "$PHP_VERSION" || die "$PHP2SHELL_DETAIL no tiene corregida la vulnerabilidad PHP2Shell (CVE-2026-109618 y CVE-2026-109619). Usa un sistema con paquetes de PHP actualizados."
+ok "$PHP2SHELL_DETAIL: PHP2Shell corregido"
+for sapi in fpm cli; do
+  [[ -d /etc/php/$PHP_VERSION/$sapi/conf.d ]] && printf '; Generated by HostPanel.\nsession.upload_progress.enabled=0\nexpose_php=Off\n' >"/etc/php/$PHP_VERSION/$sapi/conf.d/99-hostpanel.ini"
+done
 rm -f "/etc/php/$PHP_VERSION/fpm/pool.d/www.conf"
 printf '[hp-idle]\nuser = nobody\ngroup = nogroup\nlisten = /run/php/hp-idle-%s.sock\npm = ondemand\npm.max_children = 1\n' "$PHP_VERSION" \
   >"/etc/php/$PHP_VERSION/fpm/pool.d/hp-idle.conf"
