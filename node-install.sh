@@ -135,35 +135,17 @@ check_os() {
   ok "$PRETTY_NAME"
 }
 
-# Repository with every maintained PHP version (Ondřej Surý). It only publishes packages for some
-# releases (Ubuntu LTS, current Debian stable…): elsewhere the distribution's own PHP is used.
-# Uses and may change PHP_VERSION; sets PHP_REPO=1 when the repository is in use.
+# PHP only from the distribution's official repositories: third-party ones (like Ondřej Surý's)
+# lag behind new releases and break the install. Uses the requested PHP_VERSION if the official
+# repositories have it, otherwise the version the distribution ships (php-fpm → phpX.Y-fpm).
+# A leftover third-party PHP repository from older installers is removed.
 setup_php_repo() {
-  PHP_REPO=0
-  if [[ $ID == ubuntu ]]; then
-    apt_install software-properties-common
-    if q add-apt-repository -y ppa:ondrej/php && apt_update && pkg_available "php${PHP_VERSION}-fpm"; then
-      PHP_REPO=1
-    else
-      q add-apt-repository -y -r ppa:ondrej/php || true
-      rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php*
-    fi
-  else
-    if curl -fsS -o /dev/null --max-time 15 "https://packages.sury.org/php/dists/$CODENAME/Release" \
-      && curl -fsSL --max-time 30 https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg; then
-      echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $CODENAME main" >/etc/apt/sources.list.d/sury-php.list
-      if apt_update && pkg_available "php${PHP_VERSION}-fpm"; then PHP_REPO=1; fi
-    fi
-    [[ $PHP_REPO == 1 ]] || rm -f /etc/apt/sources.list.d/sury-php.list
-  fi
-  apt_update
-  if [[ $PHP_REPO == 0 ]] && ! pkg_available "php${PHP_VERSION}-fpm"; then
-    local distro
-    distro=$(LC_ALL=C apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
-    [[ -n $distro ]] || die "No hay paquetes de PHP disponibles para $PRETTY_NAME."
-    warn "El repositorio de PHP no publica paquetes para $PRETTY_NAME: se usa PHP $distro de la distribución."
-    PHP_VERSION=$distro
-  fi
+  local distro
+  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php* /etc/apt/sources.list.d/sury-php.list /usr/share/keyrings/sury-php.gpg
+  if [[ -n ${PHP_VERSION:-} ]] && pkg_available "php${PHP_VERSION}-fpm"; then return 0; fi
+  distro=$(LC_ALL=C apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+  [[ -n $distro ]] || die "No hay paquetes de PHP en los repositorios oficiales de $PRETTY_NAME."
+  PHP_VERSION=$distro
 }
 
 [[ $EUID -eq 0 ]] || { echo "Ejecuta como root (sudo)." >&2; exit 1; }
@@ -195,7 +177,12 @@ case "$(uname -m)" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) die 
 printf '\n%s%s  HostPanel%s — nodo de despliegue para el panel %s\n' "$O" "$B" "$N" "$PANEL_IP"
 
 step "Paquetes base"
-apt_update
+# Third-party PHP repositories from older installers are no longer used (they break on new releases).
+rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php* /etc/apt/sources.list.d/sury-php.list /usr/share/keyrings/sury-php.gpg
+if ! apt_update; then
+  warn "Algún repositorio de apt da error; se continúa con los demás:"
+  grep -E '^(E|Err):' "$LOG" | tail -n 2 | sed 's/^/       /' || true
+fi
 apt_install ca-certificates curl gnupg rsync acl ufw jq
 ok "Listo"
 

@@ -15,6 +15,7 @@ interface PhpState {
     version: string;
     installed: boolean;
     sites: number;
+    available: boolean;
     /** PHP2Shell status of the installed build. */
     security: { version: string; patched: boolean; via: 'version' | 'backport' | null } | null;
     fixed_in: string | null;
@@ -101,7 +102,7 @@ function PhpVersions() {
                   {isDefault ? <Badge tone="accent">Por defecto</Badge> : v.installed ? <Badge tone="ok" dot>Instalado</Badge> : <Badge>No instalado</Badge>}
                 </div>
                 <div className="text-[13px] text-muted">
-                  {v.installed ? (v.sites ? `${v.sites} sitio${v.sites === 1 ? '' : 's'} lo usa${v.sites === 1 ? '' : 'n'}` : 'Sin sitios') : v.fixed_in ? 'Disponible para instalar' : 'Sin versión oficial corregida: solo se instala si el paquete trae el parche'}
+                  {v.installed ? (v.sites ? `${v.sites} sitio${v.sites === 1 ? '' : 's'} lo usa${v.sites === 1 ? '' : 'n'}` : 'Sin sitios') : !v.available ? 'No está en los repositorios oficiales de este sistema' : v.fixed_in ? 'Disponible para instalar' : 'Sin versión oficial corregida: solo se instala si el paquete trae el parche'}
                 </div>
                 {v.security && (
                   <div className={cx('flex items-center gap-1.5 text-xs', v.security.patched ? 'text-ok' : 'text-danger')}>
@@ -111,7 +112,7 @@ function PhpVersions() {
                   </div>
                 )}
                 <div className="mt-auto flex gap-1.5">
-                  {!v.installed ? (
+                  {!v.installed && !v.available ? null : !v.installed ? (
                     <Button size="sm" icon={<Download className="size-3.5" />} disabled={busy} loading={install.isPending && install.variables === v.version} onClick={() => install.mutate(v.version)}>
                       Instalar
                     </Button>

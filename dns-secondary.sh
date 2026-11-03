@@ -104,7 +104,7 @@ step "Comprobando el sistema"
 check_os
 
 step "Paquetes"
-apt_update
+apt_update || warn "Algún repositorio de apt da error; se continúa con los demás (detalles en $LOG)."
 apt_install ca-certificates curl ufw sqlite3 fail2ban python3-systemd unattended-upgrades
 ok "Paquetes base"
 

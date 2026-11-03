@@ -24,7 +24,7 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **KV**: almacén clave-valor con caducidad para los Workers
 - **Almacenamiento** de objetos: buckets con dominio propio, CDN, CORS y API con tokens
 - **Varios servidores**: despliega en otros VPS y **balancea la carga** entre ellos
-- **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
+- **PHP de los repositorios oficiales** de la distribución, con una versión por sitio cuando los repositorios ofrecen varias, y avisos de cada parche
 - **Solo PHP con PHP2Shell corregido** (CVE-2026-109618 y CVE-2026-109619): instalador y panel rechazan versiones anteriores a
   8.2.35 / 8.3.36 / 8.4.27 / 8.5.12, salvo paquetes de la distribución que incluyan el parche (lo indica su changelog).
   PHP 7.4, 8.0 y 8.1 solo se aceptan con ese parche. Las versiones vulnerables ya instaladas se marcan con un botón
@@ -43,8 +43,7 @@ Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); h
 Guía paso a paso (servidor, asistente, registrador y proveedor del VPS): **[Manual de instalación](INSTALL.md)**.
 
 Servidor limpio con **Ubuntu 22.04 o posterior** (mejor una LTS: 24.04, 26.04…) o **Debian 12 o posterior** (x86_64 o arm64),
-2 GB de RAM recomendados. En versiones para las que el repositorio de PHP de Ondřej Surý aún no publica paquetes, se usa el
-PHP de la propia distribución (y no se pueden instalar otras versiones desde el panel).
+2 GB de RAM recomendados. Los paquetes (PHP incluido) vienen de los repositorios oficiales de la distribución.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
@@ -293,7 +292,7 @@ nunca hay que editar a mano la configuración de Caddy, PowerDNS o Stalwart.
 | **Bases de datos SQL** | MariaDB | apt `mariadb-server` | Una base de datos con su propio usuario por proyecto; consola, API HTTP y acceso remoto por IP |
 | **Bases de datos NoSQL** | SQLite (`node:sqlite`), un archivo por base de datos | Incluido en el panel | Documentos JSON por colección con filtros, índices y API |
 | **Almacenamiento de objetos** | Carpetas en disco (`/srv/hostpanel/storage`) | Incluido en el panel | Buckets públicos o privados, servidos por Caddy en su propio dominio o por API con token |
-| **PHP** | PHP-FPM 7.4 → 8.5 | Repositorio de Ondřej Surý | Un pool aislado por sitio (su usuario, `open_basedir`, sus ajustes); varias versiones a la vez. Incluye Composer y WP-CLI |
+| **PHP** | PHP-FPM de la distribución | Repositorios oficiales de Ubuntu/Debian | Un pool aislado por sitio (su usuario, `open_basedir`, sus ajustes); varias versiones si los repositorios las ofrecen. Incluye Composer y WP-CLI |
 | **Node.js** | Node 24 para el panel; cualquier versión para los sitios | NodeSource; versiones extra en `/opt/nodejs/<versión>` | Ejecuta el panel, compila los sitios y sirve las apps Node |
 | **Workers** | Runtime propio compatible con la API de Cloudflare Workers (`panel/runtime/worker-host.mjs`) | Incluido en el panel | Funciones JavaScript con rutas, subdominio, crons, colas y bindings |
 | **Colas y KV** | Tablas en la base de datos del panel | Incluido en el panel | Mensajería entre Workers y almacén clave-valor con caducidad |

@@ -1,6 +1,7 @@
 /**
- * Multiple PHP versions side by side (packages from the Ondřej Surý repository, added by
- * the installer). Each site picks its version; its FPM pool lives in that version's pool.d.
+ * PHP versions side by side, from the distribution's official repositories only (usually one
+ * version; more if the repositories offer them). Each site picks its version; its FPM pool lives
+ * in that version's pool.d.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { config } from '../config.ts';
@@ -64,6 +65,18 @@ async function aptCandidate(pkg: string) {
   const r = await tryExec('apt-cache', ['policy', pkg], { env: APT_PARSE_ENV });
   const m = /Candidate:\s*(\S+)/.exec(r.output);
   return m && m[1] !== '(none)' ? m[1] : '';
+}
+
+let availableCache: { at: number; versions: string[] } | null = null;
+
+/** Versions the official repositories can install (cached for 10 minutes). */
+export async function availablePhpVersions(): Promise<string[]> {
+  if (config.dev) return ['8.2', '8.3', '8.4', '8.5'];
+  if (availableCache && Date.now() - availableCache.at < 10 * 60_000) return availableCache.versions;
+  const versions: string[] = [];
+  for (const v of SUPPORTED_PHP) if (await aptCandidate(`php${v}-fpm`)) versions.push(v);
+  availableCache = { at: Date.now(), versions };
+  return versions;
 }
 
 /**

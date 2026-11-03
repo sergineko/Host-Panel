@@ -7,6 +7,7 @@ import { scheduleCaddySync } from '../services/caddy.ts';
 import { getJob, listJobs, runningJob, startJob } from '../services/jobs.ts';
 import {
   defaultPhpVersion,
+  availablePhpVersions,
   installedPhpVersions,
   installPhp,
   phpUsage,
@@ -34,6 +35,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get('/api/php', async () => {
     const installed = installedPhpVersions();
     const usage = phpUsage();
+    const available = await availablePhpVersions();
     await checkAllPhp(installed.filter((v) => !phpSecurity(v)));
     return {
       default: defaultPhpVersion(),
@@ -41,6 +43,8 @@ export default async function adminRoutes(app: FastifyInstance) {
         version: v,
         installed: installed.includes(v),
         sites: usage[v] ?? 0,
+        /** The official repositories of this system have it. */
+        available: installed.includes(v) || available.includes(v),
         security: installed.includes(v) ? phpSecurity(v) : null,
         fixed_in: PHP2SHELL_FIXED[v] ?? null,
       })),
