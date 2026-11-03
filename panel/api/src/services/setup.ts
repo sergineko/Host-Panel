@@ -73,7 +73,11 @@ export function newSetupToken() {
 }
 
 export function setupUrls(token: string) {
-  const urls = [`https://${config.serverIp}:${config.panelPort}/setup?token=${token}`];
+  // Behind a router the local address comes first: it's the one that works from the same network.
+  const urls = [
+    ...(config.localIp ? [`https://${config.localIp}:${config.panelPort}/setup?token=${token}`] : []),
+    `https://${config.serverIp}:${config.panelPort}/setup?token=${token}`,
+  ];
   if (config.panelDomain) urls.push(`https://${config.panelDomain}/setup?token=${token}`);
   return urls;
 }

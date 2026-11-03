@@ -27,6 +27,7 @@ interface SetupState {
   twofa_done: boolean;
   timezone: string;
   private_ip: boolean;
+  local_ip: string | null;
   identity: ServerIdentity;
   main_domain_id: number | null;
 }
@@ -319,6 +320,14 @@ function DomainStep({ state, onDone }: { state: SetupState; onDone: () => void }
           <Callout tone="warn" title={`La IP detectada (${state.identity.server_ip}) es privada`}>
             Parece que el servidor está detrás de un router o NAT. Los registros DNS necesitan la IP pública: corrige <code className="font-mono">HP_SERVER_IP</code> en{' '}
             <code className="font-mono">/etc/hostpanel/hostpanel.env</code> y ejecuta <code className="font-mono">sudo hostpanel restart</code> antes de seguir.
+          </Callout>
+        )}
+        {state.local_ip && !state.private_ip && (
+          <Callout tone="warn" title="El servidor está detrás de un router">
+            Su IP pública es <span className="font-mono">{state.identity.server_ip}</span> (la del router) y en tu red local es{' '}
+            <span className="font-mono">{state.local_ip}</span>. Para que el dominio, la web y el correo funcionen desde internet, redirige en el router a{' '}
+            <span className="font-mono">{state.local_ip}</span> los puertos 80, 443 y 2087, 53 (TCP y UDP) y 25, 465, 587 y 993. Si tu conexión no tiene IP fija,
+            no sirve como servidor de nameservers y correo.
           </Callout>
         )}
         <Field label="Dominio" hint="Debe estar registrado a tu nombre: tendrás que cambiar sus nameservers en el registrador.">

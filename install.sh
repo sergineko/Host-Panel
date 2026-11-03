@@ -251,6 +251,15 @@ fi
 PUBLIC_IP6=$(curl -6 -fsS --max-time 4 https://api64.ipify.org 2>/dev/null || true)
 [[ $PUBLIC_IP6 == *:* ]] || PUBLIC_IP6=''
 ok "IP pública: $PUBLIC_IP${PUBLIC_IP6:+ · IPv6: $PUBLIC_IP6}"
+# Behind a router or NAT (home server, VirtualBox…) the public IP belongs to the router: the panel
+# is then opened with the machine's own IP, and the router must forward the ports to it.
+LOCAL_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}' || true)
+[[ $LOCAL_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || LOCAL_IP=''
+if [[ -n $LOCAL_IP ]] && ! ip -4 -o addr show 2>/dev/null | grep -q " inet $PUBLIC_IP/"; then
+  warn "Este servidor está detrás de un router o NAT: su IP en la red local es $LOCAL_IP."
+else
+  LOCAL_IP=''
+fi
 
 # A fresh install asks nothing here: the first visit to the panel asks for the main domain,
 # the contact email and the administrator account (see "Configuración inicial" at the end).
@@ -565,6 +574,7 @@ HP_MAIL_HOSTNAME=$MAIL_HOSTNAME
 HP_NS1=$NS1
 HP_NS2=$NS2
 HP_SERVER_IP=$PUBLIC_IP
+HP_LOCAL_IP=$LOCAL_IP
 HP_SERVER_IPV6=$PUBLIC_IP6
 HP_ADMIN_EMAIL=$EMAIL
 HP_SECRET=$SECRET
@@ -630,10 +640,23 @@ echo
 printf '%s%s  ✔ HostPanel está listo%s\n\n' "$G" "$B" "$N"
 if [[ -n $SETUP_URLS ]]; then
   SETUP_IP_URL=$(head -n 1 <<<"$SETUP_URLS")
-  cat <<EOF
+  if [[ -n $LOCAL_IP ]]; then
+    SETUP_PUBLIC_URL=$(grep -m 1 "://$PUBLIC_IP:" <<<"$SETUP_URLS" || true)
+    cat <<EOF
+  ${B}Configuración inicial${N}: abre este enlace en tu navegador para terminar.
+
+      Desde tu red local:  ${O}${SETUP_IP_URL}${N}
+      Desde internet:      ${SETUP_PUBLIC_URL}
+                           (solo si el router redirige el puerto 2087 a $LOCAL_IP)
+EOF
+  else
+    cat <<EOF
   ${B}Configuración inicial${N}: abre este enlace en tu navegador para terminar.
 
       ${O}${SETUP_IP_URL}${N}
+EOF
+  fi
+  cat <<EOF
 
   El navegador avisará del certificado (es interno hasta que tengas dominio): acéptalo.
   El panel te pedirá:
@@ -646,7 +669,7 @@ if [[ -n $SETUP_URLS ]]; then
   ¿Lo has perdido?  sudo hostpanel setup-link
 EOF
 else
-  printf '  %sPanel%s        https://%s:2087   (certificado interno: acepta el aviso del navegador)\n' "$B" "$N" "$PUBLIC_IP"
+  printf '  %sPanel%s        https://%s:2087   (certificado interno: acepta el aviso del navegador)\n' "$B" "$N" "${LOCAL_IP:-$PUBLIC_IP}"
   if [[ -n $PANEL_DOMAIN ]]; then printf '               https://%s   (en cuanto el DNS apunte aquí)\n' "$PANEL_DOMAIN"; fi
 fi
 if [[ -n $DOMAIN && -z $SETUP_URLS ]]; then
@@ -658,6 +681,13 @@ if [[ -n $DOMAIN && -z $SETUP_URLS ]]; then
     2. Cambia los nameservers de $DOMAIN a  $NS1  y  $NS2
   ${B}Correo${N}: pide a tu proveedor que configure el DNS inverso (PTR) de $PUBLIC_IP
   como $MAIL_HOSTNAME y que abra el puerto 25 de salida si lo bloquea.
+EOF
+fi
+if [[ -n $LOCAL_IP ]]; then
+  cat <<EOF
+
+  ${Y}Detrás de un router${N}: para que internet llegue al servidor, redirige en el router a $LOCAL_IP
+  los puertos 80, 443 y 2087 (web y panel), 53 TCP/UDP (DNS) y 25, 465, 587, 993 (correo).
 EOF
 fi
 cat <<EOF

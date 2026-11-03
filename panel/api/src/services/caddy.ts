@@ -637,6 +637,18 @@ export function buildCaddyConfig(): Json {
       : [...securityRoutes(domain, sec, ipRules), ...responseHeaders(sec), ...e.content];
     routes.push({ match: [{ host: [host] }], handle: [{ handler: 'subroute', routes: inner }], terminal: true });
   }
+  // Opening the server by its IP (http://IP or https://IP) leads to the panel on its own port.
+  routes.push({
+    match: [{ header_regexp: { Host: { pattern: '^(\\d{1,3}(\\.\\d{1,3}){3}|\\[[0-9a-fA-F:]+\\])(:\\d+)?$' } } }],
+    handle: [
+      {
+        handler: 'static_response',
+        status_code: 302,
+        headers: { Location: [`https://{http.request.host}:${config.panelPort}{http.request.uri}`] },
+      },
+    ],
+    terminal: true,
+  });
   routes.push({
     handle: [
       {
@@ -648,7 +660,7 @@ export function buildCaddyConfig(): Json {
     ],
   });
 
-  const panelHosts = [config.serverIp, config.panelDomain].filter(Boolean);
+  const panelHosts = [config.serverIp, config.localIp, config.panelDomain].filter(Boolean);
   // Optional allowlist for the panel itself (Ajustes → Acceso al panel).
   const panelAllow = (getSetting('panel_allow_ips') ?? '').split(/[\s,]+/).filter(Boolean);
   const panelGuard: Route[] = panelAllow.length
@@ -684,6 +696,8 @@ export function buildCaddyConfig(): Json {
           web: {
             listen: [':80', ':443'],
             routes,
+            // Browsers send no SNI for https://<IP>: answer with the internal certificate of the IP.
+            tls_connection_policies: [{ default_sni: config.serverIp }],
             logs: { default_logger_name: ACCESS_LOGGER },
           },
           // Panel reachable at https://<server-ip>:2087 from minute one (internal certificate).
@@ -717,7 +731,7 @@ export function buildCaddyConfig(): Json {
         ...(originSites.length ? { certificates: { automate: ['127.0.0.1'] } } : {}),
         automation: {
           policies: [
-            { subjects: [config.serverIp, '127.0.0.1'], issuers: [{ module: 'internal' }] },
+            { subjects: [config.serverIp, ...(config.localIp ? [config.localIp] : []), '127.0.0.1'], issuers: [{ module: 'internal' }] },
             // Every other hostname gets its own Let's Encrypt certificate (HTTP-01 / TLS-ALPN-01),
             // renewed by Caddy when a third of its lifetime is left.
             { issuers: [letsEncryptIssuer()] },

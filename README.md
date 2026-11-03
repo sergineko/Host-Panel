@@ -176,18 +176,19 @@ repositorio (`*.pem` está en `.gitignore`).
 **1. Una sola vez: crear el par de claves**
 
 ```bash
-node tools/license/keygen.mjs ~/.hostpanel-license
+node tools/license/keygen.mjs
 ```
 
-Crea `license-private.pem` (secreta: haz copia de seguridad; quien la tenga puede emitir licencias) y
-`license-public.pem`, cuyo contenido va en `LICENSE_PUBLIC_KEY` de `panel/api/src/services/license.ts`. Si cambias la clave,
-las licencias emitidas con la anterior dejan de valer.
+Crea la carpeta `.hostpanel-license` en tu carpeta de usuario (en Windows `C:\Users\<usuario>\.hostpanel-license`) con
+`license-private.pem` (secreta: haz copia de seguridad; quien la tenga puede emitir licencias) y `license-public.pem`,
+cuyo contenido va en `LICENSE_PUBLIC_KEY` de `panel/api/src/services/license.ts`. Si cambias la clave, las licencias
+emitidas con la anterior dejan de valer.
 
 **2. Por cada venta: generar la licencia del plan contratado**
 
-```bash
-export HP_LICENSE_KEY=~/.hostpanel-license/license-private.pem
+Desde la carpeta del proyecto, igual en Windows (PowerShell), macOS o Linux:
 
+```bash
 # Personal (1 acceso)
 node tools/license/issue.mjs personal cliente@empresa.com 2027-12-31
 
@@ -200,6 +201,9 @@ node tools/license/issue.mjs empresa cliente@empresa.com 2027-12-31
 # Reseller (50 incluidos + extras, marca propia)
 node tools/license/issue.mjs reseller cliente@empresa.com 2027-12-31
 ```
+
+La clave se lee de tu carpeta de usuario. Si la guardas en otro sitio, indica la ruta en la variable `HP_LICENSE_KEY`
+(PowerShell: `$env:HP_LICENSE_KEY = "D:\claves\license-private.pem"`; Linux/macOS: `export HP_LICENSE_KEY=...`).
 
 - El primer argumento es el código del plan; el segundo, el email del cliente; el tercero (opcional), el último día del
   periodo pagado (`AAAA-MM-DD`).

@@ -99,6 +99,7 @@ export default async function setupRoutes(app: FastifyInstance) {
       twofa_done: !!u.totp_secret || getSetting('setup_2fa_done') === '1',
       timezone: currentTimezone(),
       private_ip: isPrivateIp(config.serverIp),
+      local_ip: config.localIp || null,
       identity: { ...identity, candidates: mainDomainCandidates() },
       main_domain_id: identity.base_domain ? (get<{ id: number }>('SELECT id FROM domains WHERE name = ?', identity.base_domain)?.id ?? null) : null,
     };

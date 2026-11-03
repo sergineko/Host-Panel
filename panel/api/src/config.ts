@@ -45,6 +45,8 @@ export const config = {
 
   serverIp: env('HP_SERVER_IP', '127.0.0.1'),
   serverIpv6: env('HP_SERVER_IPV6'),
+  /** The machine's own IP when it sits behind a router/NAT (empty when it has the public IP). */
+  localIp: env('HP_LOCAL_IP'),
   panelDomain: env('HP_PANEL_DOMAIN'),
   baseDomain: env('HP_BASE_DOMAIN'),
   /** Workers get <name>.<workersDomain> (like *.workers.dev). */
