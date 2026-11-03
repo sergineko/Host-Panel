@@ -15,6 +15,7 @@ import {
 } from './lib/crypto.ts';
 import { badRequest, HttpError, parse } from './lib/validate.ts';
 import { config } from './config.ts';
+import { activeBranding } from './services/branding.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -35,7 +36,7 @@ const COOKIE = 'hp_session';
 const SESSION_TTL = 12 * 3600 * 1000;
 // Token APIs (storage, databases) check their own Bearer tokens.
 // The first-run setup endpoints check the one-time setup token themselves.
-const PUBLIC_PREFIXES = ['/api/auth/login', '/api/setup/status', '/api/setup/verify', '/api/setup/account', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/sql/v1/', '/api/nosql/v1/', '/api/queues/v1/'];
+const PUBLIC_PREFIXES = ['/api/auth/login', '/api/branding/public', '/api/setup/status', '/api/setup/verify', '/api/setup/account', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/sql/v1/', '/api/nosql/v1/', '/api/queues/v1/'];
 const pendingTotp = new Map<number, string>();
 
 // Brute-force protection: 8 failed attempts per IP in 15 minutes.
@@ -217,7 +218,7 @@ export async function authPlugin(app: FastifyInstance) {
   app.post('/api/auth/2fa/setup', async (req) => {
     const secret = newTotpSecret();
     pendingTotp.set(req.user!.id, secret);
-    return { secret, uri: totpUri(secret, totpAccount(req.user!.username)) };
+    return { secret, uri: totpUri(secret, totpAccount(req.user!.username), activeBranding().name) };
   });
 
   app.post('/api/auth/2fa/enable', async (req) => {

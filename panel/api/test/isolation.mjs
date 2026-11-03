@@ -1,7 +1,8 @@
 // Client isolation checks for reseller mode (access.ts).
 //
 // Needs a dev server with an EMPTY data folder (first-run state), for example the
-// "hostpanel-setup" entry of .claude/launch.json (port 3010):
+// "hostpanel-setup" entry of .claude/launch.json (port 3010, HP_LICENSE_PLAN=reseller so the
+// access limit doesn't get in the way):
 //   rm -rf .dev-data/setup-test   # then start the server
 //   node panel/api/test/isolation.mjs            (HP_TEST_URL=http://localhost:3010 by default)
 const BASE = process.env.HP_TEST_URL ?? 'http://localhost:3010';

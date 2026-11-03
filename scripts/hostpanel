@@ -21,6 +21,7 @@ ${B}Uso:${N} hostpanel <comando>
   restart [servicio]      Reinicia el panel (o el servicio indicado, o 'all')
   logs [servicio]         Sigue los logs (hostpanel, caddy, pdns, stalwart…)
   setup-link              Nuevo enlace para la configuración inicial (cuenta, 2FA y dominio)
+  license [licencia]      Muestra el plan y los accesos en uso, o instala una licencia
   reset-password [usuario] [contraseña]
                           Restablece la contraseña del panel (genera una si no se indica)
   sync-proxy              Regenera y aplica la configuración de Caddy
@@ -77,6 +78,10 @@ case $cmd in
   setup-link)
     need_root setup-link
     cli setup-link
+    ;;
+  license)
+    need_root license
+    cli license "${1:-}"
     ;;
   panel-access-reset)
     need_root panel-access-reset

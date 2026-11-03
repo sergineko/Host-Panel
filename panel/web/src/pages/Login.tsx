@@ -143,9 +143,7 @@ export default function Login() {
             </>
           )}
         </form>
-        <p className="mt-6 text-center text-xs text-muted">
-          ¿Olvidaste la contraseña? Ejecuta <code className="font-mono">sudo hostpanel reset-password</code> en el servidor.
-        </p>
+        <p className="mt-6 text-center text-xs text-muted">¿Olvidaste la contraseña? Pide una nueva al administrador del panel.</p>
       </div>
     </div>
   );

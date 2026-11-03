@@ -5,6 +5,7 @@ import { KeyRound, Plus, ShieldOff, UserPlus, Users } from 'lucide-react';
 import { api, type ClientAccount, type ClientDetail, type DatabaseInfo, type Domain, type PanelUser } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { ROLE_LABEL, useMe } from '../lib/me';
+import { AccessUsage, useLicense } from '../components/LicenseCards';
 import { Badge, Button, Callout, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Tabs, Td, Textarea, cx } from '../components/ui';
 
 type ClientForm = { name: string; email: string; company: string; notes: string };
@@ -104,6 +105,9 @@ function UsersTable({ users, onPassword, invalidate, showClient }: { users: Pane
 }
 
 function AddUser({ role, clientId, onCreated }: { role: 'admin' | 'client'; clientId?: number; onCreated: (v: { username: string; password: string }) => void }) {
+  const qc = useQueryClient();
+  const lic = useLicense();
+  const full = !!lic.data && lic.data.max !== null && lic.data.used >= lic.data.max;
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const add = useMutation({
@@ -111,9 +115,19 @@ function AddUser({ role, clientId, onCreated }: { role: 'admin' | 'client'; clie
     onSuccess: (r) => {
       setUsername('');
       setEmail('');
+      qc.invalidateQueries({ queryKey: ['license'] });
       if (r.password) onCreated({ username: r.user.username, password: r.password });
     },
   });
+  if (full) {
+    return (
+      <div className="border-t border-border p-4">
+        <Callout tone="warn" title={`Has llegado al límite de tu plan ${lic.data!.plan.name}`}>
+          Tu plan incluye {lic.data!.max} {lic.data!.max === 1 ? 'acceso' : 'accesos'} (titular, equipo y clientes). Desactiva alguno o cambia de plan en Ajustes → Licencia.
+        </Callout>
+      </div>
+    );
+  }
   return (
     <form
       className="space-y-2 border-t border-border p-4"
@@ -165,6 +179,7 @@ function ClientModal({ clientId, onClose }: { clientId: number | null; onClose: 
     qc.invalidateQueries({ queryKey: ['clients'] });
     qc.invalidateQueries({ queryKey: ['domains'] });
     qc.invalidateQueries({ queryKey: ['databases'] });
+    qc.invalidateQueries({ queryKey: ['license'] });
   };
   const save = useMutation({
     mutationFn: () => api.put(`/api/clients/${clientId}`, form),
@@ -376,7 +391,10 @@ function Team() {
   const [shown, setShown] = useState<{ username: string; password: string } | null>(null);
   const users = useQuery({ queryKey: ['users'], queryFn: () => api.get<PanelUser[]>('/api/users') });
   const team = (users.data ?? []).filter((u) => u.role !== 'client');
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['users'] });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['users'] });
+    qc.invalidateQueries({ queryKey: ['license'] });
+  };
   return (
     <Card title="Tu equipo" icon={<Users />} description="Personas de tu empresa con acceso a todo el panel (menos la gestión del equipo, que es solo del titular)." padded={false}>
       {users.isLoading ? <Spinner /> : <UsersTable users={team} onPassword={setShown} invalidate={invalidate} showClient />}
@@ -396,6 +414,7 @@ function Team() {
 
 export default function Clients() {
   const q = useQuery({ queryKey: ['clients'], queryFn: () => api.get<{ clients: ClientAccount[]; active: number }>('/api/clients') });
+  const lic = useLicense();
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
   const list = q.data?.clients ?? [];
@@ -412,10 +431,10 @@ export default function Clients() {
         }
       />
       <div className="space-y-4">
-        {q.data && list.length > 0 && (
-          <Callout tone="info">
-            <strong>{q.data.active}</strong> {q.data.active === 1 ? 'cliente activo' : 'clientes activos'}: es lo que cuenta para la facturación de tu licencia. Los suspendidos no cuentan.
-          </Callout>
+        {lic.data && (
+          <Card>
+            <AccessUsage info={lic.data} />
+          </Card>
         )}
         <Card padded={false}>
           {q.isLoading ? (

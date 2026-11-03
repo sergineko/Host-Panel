@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { renderSVG } from 'uqr';
 import { Check, Copy, Download, Smartphone } from 'lucide-react';
 import { api } from '../lib/api';
+import { useBranding } from '../lib/branding';
 import { Button, Copyable, ErrorBox, Field, Input, Spinner } from './ui';
 
 /** Apps that read the QR code (all use standard TOTP: SHA-1, 6 digits, 30 s). */
@@ -13,9 +14,10 @@ const groupSecret = (s: string) => s.replace(/(.{4})/g, '$1 ').trim();
 
 /** One-time recovery codes, shown right after they are generated. */
 export function RecoveryCodes({ codes, onConfirm, confirmLabel = 'Los he guardado' }: { codes: string[]; onConfirm?: () => void; confirmLabel?: string }) {
+  const brand = useBranding();
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
-  const text = `Códigos de recuperación de HostPanel (${location.host})\nCada código sirve una sola vez.\n\n${codes.join('\n')}\n`;
+  const text = `Códigos de recuperación de ${brand.name} (${location.host})\nCada código sirve una sola vez.\n\n${codes.join('\n')}\n`;
   return (
     <div className="space-y-3">
       <p className="text-[13px] text-muted">
@@ -45,7 +47,7 @@ export function RecoveryCodes({ codes, onConfirm, confirmLabel = 'Los he guardad
           onClick={() => {
             const a = document.createElement('a');
             a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-            a.download = 'hostpanel-codigos-recuperacion.txt';
+            a.download = 'codigos-recuperacion.txt';
             a.click();
             URL.revokeObjectURL(a.href);
           }}

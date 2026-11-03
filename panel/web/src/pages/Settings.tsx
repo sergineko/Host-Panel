@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { MainDomainCard } from '../components/Connection';
 import { StrengthMeter } from '../components/AccountFields';
+import { BrandingCard, LicenseCard } from '../components/LicenseCards';
 import { AUTH_APPS, RecoveryCodes, TotpEnroll } from '../components/TwoFactor';
 import { Badge, Button, Card, Copyable, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Textarea } from '../components/ui';
 import { isStaffRole, useMe } from '../lib/me';
@@ -297,6 +298,8 @@ export default function SettingsPage() {
           </form>
         </Card>
 
+        {staff && <LicenseCard />}
+        {staff && <BrandingCard />}
         <TwoFactor />
         {staff && <PanelAccess />}
         <div className="lg:col-span-2">

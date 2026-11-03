@@ -12,6 +12,7 @@ import { all, audit, db, get, run, type ClientRow } from '../db.ts';
 import { normalizeUsername, passwordProblem, usernameProblem } from '../lib/accounts.ts';
 import { hashPassword, randomPassword } from '../lib/crypto.ts';
 import { badRequest, HttpError, idParam, notFound, parse } from '../lib/validate.ts';
+import { assertAccessAvailable, clientAccesses } from '../services/license.ts';
 
 interface UserRow {
   id: number;
@@ -104,6 +105,8 @@ export default async function clientRoutes(app: FastifyInstance) {
     const { id } = parse(idParam, req.params);
     const before = getClient(id);
     const body = parse(clientInput.extend({ status: z.enum(['active', 'suspended']) }), req.body);
+    // Re-activating brings its logins back: they must fit in the plan.
+    if (body.status === 'active' && before.status === 'suspended') assertAccessAvailable(clientAccesses(id));
     run('UPDATE clients SET name = ?, email = ?, company = ?, notes = ?, status = ? WHERE id = ?', body.name, body.email, body.company, body.notes, body.status, id);
     if (body.status === 'suspended' && before.status !== 'suspended') {
       // Out right away, not at the next page load.
@@ -190,6 +193,9 @@ export default async function clientRoutes(app: FastifyInstance) {
     const problem = usernameProblem(username);
     if (problem) throw badRequest(problem);
     if (get('SELECT 1 FROM users WHERE lower(username) = ?', username)) throw badRequest('Ya existe un usuario con ese nombre');
+    // A login of a suspended client can't sign in, so it doesn't use an access yet.
+    const clientActive = body.role !== 'client' || get<{ status: string }>('SELECT status FROM clients WHERE id = ?', body.client_id!)?.status === 'active';
+    if (clientActive) assertAccessAvailable();
     const generated = !body.password;
     const password = body.password || randomPassword(20);
     if (!generated) {
@@ -215,6 +221,10 @@ export default async function clientRoutes(app: FastifyInstance) {
     const body = parse(z.object({ email: z.union([z.literal(''), z.email('Email no válido')]).optional(), disabled: z.boolean().optional() }), req.body);
     if (body.email !== undefined) run('UPDATE users SET email = ? WHERE id = ?', body.email, id);
     if (body.disabled !== undefined) {
+      if (target.disabled && !body.disabled) {
+        const clientActive = target.role !== 'client' || get<{ status: string }>('SELECT status FROM clients WHERE id = ?', target.client_id!)?.status === 'active';
+        if (clientActive) assertAccessAvailable();
+      }
       run('UPDATE users SET disabled = ? WHERE id = ?', Number(body.disabled), id);
       if (body.disabled) run('DELETE FROM sessions WHERE user_id = ?', id);
       audit(req.user!.username, body.disabled ? 'user.disable' : 'user.enable', target.username, req.ip);

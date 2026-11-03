@@ -22,7 +22,8 @@
         "HP_PANEL_DOMAIN": "panel.ejemplo.com",
         "HP_NS1": "ns1.ejemplo.com",
         "HP_NS2": "ns2.ejemplo.com",
-        "HP_SERVER_IP": "203.0.113.10"
+        "HP_SERVER_IP": "203.0.113.10",
+        "HP_LICENSE_PLAN": "reseller"
       },
       "port": 3000,
       "autoPort": false
@@ -44,7 +45,8 @@
         "HP_STORAGE_DIR": ".dev-data/setup-test/storage",
         "HP_WORKERS_DIR": ".dev-data/setup-test/workers",
         "HP_ENV_FILE": ".dev-data/none.env",
-        "HP_SERVER_IP": "203.0.113.10"
+        "HP_SERVER_IP": "203.0.113.10",
+        "HP_LICENSE_PLAN": "reseller"
       },
       "port": 3010,
       "autoPort": false

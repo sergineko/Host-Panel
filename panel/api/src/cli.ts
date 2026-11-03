@@ -3,6 +3,7 @@
  *   node src/cli.ts reset-password [usuario] [contraseña]
  *   node src/cli.ts disable-2fa [usuario]
  *   node src/cli.ts setup-link                   (enlace de la configuración inicial)
+ *   node src/cli.ts license [licencia]           (muestra o instala la licencia)
  *   node src/cli.ts sync-proxy
  *   node src/cli.ts bootstrap-domain <dominio>   (zona DNS + correo del dominio principal)
  */
@@ -11,6 +12,7 @@ import { config } from './config.ts';
 import { get, run, setSetting } from './db.ts';
 import { randomPassword } from './lib/crypto.ts';
 import { newSetupToken, setupUrls, userCount } from './services/setup.ts';
+import { installLicense, licenseUsage } from './services/license.ts';
 import { DOMAIN_RE } from './lib/validate.ts';
 import { syncCaddy } from './services/caddy.ts';
 import * as dns from './services/dns.ts';
@@ -77,6 +79,16 @@ try {
       for (const url of urls) console.log(url);
       break;
     }
+    case 'license': {
+      if (args[0]) {
+        const l = installLicense(args[0]);
+        console.log(`Licencia ${l.id} instalada (plan ${l.plan}).`);
+      }
+      const u = licenseUsage();
+      console.log(`Plan:     ${u.plan.name}${u.license ? ` · licencia ${u.license.id} (${u.license.email})` : ' · sin licencia'}`);
+      console.log(`Accesos:  ${u.used}${u.max === null ? ` (${u.included} incluidos${u.extra ? `, ${u.extra} extra` : ''})` : ` de ${u.max}`}`);
+      break;
+    }
     case 'panel-access-reset':
       // Recovery when the panel IP allowlist locks you out.
       setSetting('panel_allow_ips', '');
@@ -92,7 +104,7 @@ try {
       await bootstrapDomain(args[0]);
       break;
     default:
-      console.log('Uso: cli.ts reset-password [usuario] [contraseña] | disable-2fa [usuario] | setup-link | panel-access-reset | sync-proxy | bootstrap-domain <dominio>');
+      console.log('Uso: cli.ts reset-password [usuario] [contraseña] | disable-2fa [usuario] | setup-link | license [licencia] | panel-access-reset | sync-proxy | bootstrap-domain <dominio>');
       process.exit(1);
   }
 } catch (err) {

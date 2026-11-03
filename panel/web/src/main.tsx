@@ -10,6 +10,7 @@ import { Spinner } from './components/ui';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import { clientCanOpen, isStaffRole, useMe } from './lib/me';
+import { BrandingEffect } from './lib/branding';
 
 // Every other page is a separate chunk, loaded on first visit (smaller initial download).
 const Setup = lazy(() => import('./pages/Setup'));
@@ -134,6 +135,7 @@ createRoot(document.getElementById('root')!).render(
         </Routes>
       </BrowserRouter>
       <ThemedToaster />
+      <BrandingEffect />
     </QueryClientProvider>
   </StrictMode>,
 );

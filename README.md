@@ -135,10 +135,40 @@ En **Administración → Clientes**:
 | **Equipo** | Todo menos gestionar al titular y a otros miembros del equipo |
 | **Cliente** | Solo sus dominios (DNS, correo, seguridad, sitios web, archivos, copias, cron, SFTP, WordPress) y sus bases de datos. No puede añadir ni borrar dominios ni publicar en otros servidores |
 
-- Cada **cuenta de cliente** puede tener varios accesos y es la unidad que se factura: los clientes **activos** cuentan, los suspendidos no.
+- Cada **cuenta de cliente** puede tener varios accesos (usuarios). El plan limita los **accesos** (ver abajo).
 - Al **suspender** una cuenta, sus usuarios salen del panel al momento; sus webs y correo siguen funcionando.
 - Al **eliminar** una cuenta, sus dominios y bases de datos vuelven al titular (no se borra nada alojado).
 - Los permisos se comprueban en la API, no solo en la interfaz: un cliente que llame a una ruta que no tiene asignada recibe un error, y cualquier ruta nueva queda cerrada para clientes hasta permitirla en `panel/api/src/access.ts`.
+
+## Planes y licencia
+
+Cada usuario que puede entrar cuenta como un **acceso**: titular, equipo y clientes. Los desactivados y los de cuentas
+de cliente suspendidas no cuentan.
+
+| Plan | Accesos | Marca propia |
+|---|---|---|
+| Personal | 1 | No |
+| Profesional | Hasta 5 | No |
+| Empresa | Hasta 20 | No |
+| Reseller | 50 incluidos + un extra por cada acceso adicional | Sí: nombre, logo y color del panel, también en el acceso de los clientes |
+
+- Sin licencia el panel funciona con el plan **Personal**.
+- Si hay más accesos que los del plan (por ejemplo al bajar de plan), los existentes siguen funcionando, pero no se
+  pueden crear ni reactivar más.
+- La licencia la instala el titular en **Ajustes → Licencia** o con `sudo hostpanel license <licencia>`.
+- Las licencias van firmadas (Ed25519): el panel solo tiene la clave pública, así que no se pueden inventar ni modificar.
+
+### Emitir licencias (vendedor)
+
+Hasta que exista el servidor de licencias, se emiten a mano con la clave privada, que **nunca** va en el repositorio:
+
+```bash
+# Una sola vez: crea el par de claves (la pública va en panel/api/src/services/license.ts)
+node tools/license/keygen.mjs ~/.hostpanel-license
+
+# Por cada cliente: plan, email y, opcionalmente, fecha de fin del periodo pagado
+HP_LICENSE_KEY=~/.hostpanel-license/license-private.pem node tools/license/issue.mjs reseller cliente@empresa.com 2027-12-31
+```
 
 ## Comandos
 
@@ -147,6 +177,7 @@ En **Administración → Clientes**:
 | `hostpanel status` | Estado de todos los servicios |
 | `hostpanel logs [servicio]` | Logs en vivo (`hostpanel`, `caddy`, `pdns`, `stalwart`…) |
 | `hostpanel restart [servicio\|all]` | Reinicia servicios |
+| `hostpanel license [licencia]` | Muestra el plan y los accesos en uso, o instala una licencia |
 | `hostpanel setup-link` | Nuevo enlace de configuración inicial (mientras no haya cuenta) |
 | `hostpanel reset-password [usuario]` | Nueva contraseña del panel |
 | `hostpanel update [componente]` | Actualiza todo, o solo `panel`, `caddy`, `stalwart`, `roundcube`, `node`, `system` |

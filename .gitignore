@@ -6,3 +6,6 @@ dist/
 .dev-data/
 .env
 .DS_Store
+
+# Licence signing keys must never be committed
+*.pem

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { clientCanOpen, isStaffRole, ROLE_LABEL, type Role } from '../lib/me';
+import { DEFAULT_NAME, useBranding } from '../lib/branding';
 import { CommandPalette, type PaletteItem } from './CommandPalette';
 import { SectionContext, Spinner, cx, type Section } from './ui';
 
@@ -99,15 +100,29 @@ function ThemeToggle() {
 }
 
 export function Logo() {
+  const brand = useBranding();
   return (
     <div className="flex items-center gap-2.5">
-      <div className="grid size-8 place-items-center rounded-lg bg-gradient-to-br from-accent to-[#d4520a] text-white shadow-[inset_0_-1px_0_rgba(0,0,0,.18),0_1px_2px_rgba(0,0,0,.15)]">
-        <svg viewBox="0 0 32 32" className="size-4" fill="currentColor" aria-hidden>
-          <path d="M6 6h6v8h8V6h6v20h-6v-7h-8v7H6z" />
-        </svg>
-      </div>
+      {brand.logo ? (
+        <img src={brand.logo} alt="" className="size-8 rounded-lg object-contain" />
+      ) : (
+        <div
+          className={cx(
+            'grid size-8 place-items-center rounded-lg text-white shadow-[inset_0_-1px_0_rgba(0,0,0,.18),0_1px_2px_rgba(0,0,0,.15)]',
+            brand.color ? 'bg-accent text-accent-fg' : 'bg-gradient-to-br from-accent to-[#d4520a]',
+          )}
+        >
+          {brand.name === DEFAULT_NAME ? (
+            <svg viewBox="0 0 32 32" className="size-4" fill="currentColor" aria-hidden>
+              <path d="M6 6h6v8h8V6h6v20h-6v-7h-8v7H6z" />
+            </svg>
+          ) : (
+            <span className="text-[15px] font-bold uppercase">{brand.name.slice(0, 1)}</span>
+          )}
+        </div>
+      )}
       <div className="leading-tight">
-        <div className="text-[15px] font-semibold tracking-tight">HostPanel</div>
+        <div className="text-[15px] font-semibold tracking-tight">{brand.name}</div>
       </div>
     </div>
   );
