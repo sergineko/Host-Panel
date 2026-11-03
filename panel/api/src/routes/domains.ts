@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.ts';
+import { scopeOf } from '../access.ts';
 import { all, audit, get, run, type DomainRow, type IpRuleRow, type SecurityRow } from '../db.ts';
 import { randomToken } from '../lib/crypto.ts';
 import { badRequest, domainName, HttpError, idParam, notFound, parse } from '../lib/validate.ts';
@@ -20,9 +21,13 @@ function getSecurity(domainId: number): SecurityRow {
 }
 
 export default async function domainRoutes(app: FastifyInstance) {
-  app.get('/api/domains', async () => {
-    return all<DomainRow & { sites: number }>(
-      `SELECT d.*, (SELECT COUNT(*) FROM sites s WHERE s.domain_id = d.id) AS sites FROM domains d ORDER BY d.name`,
+  app.get('/api/domains', async (req) => {
+    const client = scopeOf(req);
+    return all<DomainRow & { sites: number; client_name: string | null }>(
+      `SELECT d.*, (SELECT COUNT(*) FROM sites s WHERE s.domain_id = d.id) AS sites, c.name AS client_name
+       FROM domains d LEFT JOIN clients c ON c.id = d.client_id
+       ${client === null ? '' : 'WHERE d.client_id = ?'} ORDER BY d.name`,
+      ...(client === null ? [] : [client]),
     );
   });
 

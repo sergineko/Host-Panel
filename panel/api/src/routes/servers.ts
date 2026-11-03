@@ -8,6 +8,7 @@ import { syncCaddy } from '../services/caddy.ts';
 import { syncNodeCaddy } from '../services/deploy.ts';
 import { checkServer, ensureSshKey, getServer, NODE_PORT, siteServerIds } from '../services/servers.ts';
 import { systemInfo } from '../services/system.ts';
+import { scopeOf } from '../access.ts';
 
 const REPO_RAW = 'https://raw.githubusercontent.com/sergineko/Host-Panel/main';
 
@@ -21,7 +22,10 @@ function present(s: ServerRow, sites: SiteRow[]) {
 }
 
 export default async function serverRoutes(app: FastifyInstance) {
-  app.get('/api/servers', async () => {
+  app.get('/api/servers', async (req) => {
+    if (scopeOf(req) !== null) {
+      return { local: { id: 0, name: 'Este servidor', host: config.serverIp, status: 'online', sites: [] }, servers: [] };
+    }
     const sites = all<SiteRow>('SELECT * FROM sites');
     const servers = all<ServerRow>('SELECT * FROM servers ORDER BY name').map((s) => present(s, sites));
     const sys = systemInfo();

@@ -21,6 +21,7 @@ import {
 } from '../services/databases.ts';
 import { createToken, deleteScopeTokens, deleteToken, listTokens, requireToken } from '../services/tokens.ts';
 import { boundBy } from './queues.ts';
+import { scopeOf } from '../access.ts';
 
 const RESERVED = new Set(['mysql', 'information_schema', 'performance_schema', 'sys', 'root', 'roundcube', 'hostpanel']);
 const identifier = (max: number) =>
@@ -63,8 +64,12 @@ async function rawRoutes(app: FastifyInstance) {
 export default async function databaseRoutes(app: FastifyInstance) {
   await app.register(rawRoutes);
 
-  app.get('/api/databases', async () => {
-    const rows = all<DatabaseRow>('SELECT * FROM databases ORDER BY name');
+  app.get('/api/databases', async (req) => {
+    const client = scopeOf(req);
+    const rows =
+      client === null
+        ? all<DatabaseRow>('SELECT * FROM databases ORDER BY name')
+        : all<DatabaseRow>('SELECT * FROM databases WHERE client_id = ? ORDER BY name', client);
     const sizes = await databaseSizes().catch(() => ({}) as Record<string, number>);
     return rows.map((r) => present(r, sizes[r.name] ?? 0));
   });
@@ -84,7 +89,7 @@ export default async function databaseRoutes(app: FastifyInstance) {
     const username = body.username ?? body.name.slice(0, 32);
     const password = randomPassword(24);
     await createDatabase(body.name, username, password);
-    run('INSERT INTO databases (name, username, note, password_enc) VALUES (?, ?, ?, ?)', body.name, username, body.note, encrypt(password));
+    run('INSERT INTO databases (name, username, note, password_enc, client_id) VALUES (?, ?, ?, ?, ?)', body.name, username, body.note, encrypt(password), scopeOf(req));
     audit(req.user!.username, 'database.create', body.name, req.ip);
     return { name: body.name, username, password, host: 'localhost', port: 3306 };
   });

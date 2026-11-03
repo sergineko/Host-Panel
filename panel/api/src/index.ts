@@ -4,6 +4,8 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { config } from './config.ts';
 import { authPlugin } from './auth.ts';
+import { accessPlugin } from './access.ts';
+import clientRoutes from './routes/clients.ts';
 import { ensureSetupState } from './services/setup.ts';
 import setupRoutes from './routes/setup.ts';
 import { HttpError } from './lib/validate.ts';
@@ -59,7 +61,9 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
 
 await app.register(cookie);
 await authPlugin(app);
+accessPlugin(app);
 await app.register(setupRoutes);
+await app.register(clientRoutes);
 await app.register(systemRoutes);
 await app.register(domainRoutes);
 await app.register(siteRoutes);

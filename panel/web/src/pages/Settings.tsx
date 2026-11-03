@@ -8,6 +8,7 @@ import { MainDomainCard } from '../components/Connection';
 import { StrengthMeter } from '../components/AccountFields';
 import { AUTH_APPS, RecoveryCodes, TotpEnroll } from '../components/TwoFactor';
 import { Badge, Button, Card, Copyable, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Textarea } from '../components/ui';
+import { isStaffRole, useMe } from '../lib/me';
 
 interface Settings {
   serverIp: string;
@@ -213,8 +214,11 @@ function PanelAccess() {
 }
 
 export default function SettingsPage() {
-  const s = useQuery({ queryKey: ['settings'], queryFn: () => api.get<Settings>('/api/settings') });
-  const audit = useQuery({ queryKey: ['audit'], queryFn: () => api.get<{ id: number; username: string; action: string; target: string; ip: string; created_at: string }[]>('/api/audit') });
+  const me = useMe();
+  const staff = isStaffRole(me.data?.role);
+  const s = useQuery({ queryKey: ['settings'], queryFn: () => api.get<Settings>('/api/settings'), enabled: staff });
+  const audit = useQuery({
+    enabled: staff, queryKey: ['audit'], queryFn: () => api.get<{ id: number; username: string; action: string; target: string; ip: string; created_at: string }[]>('/api/audit') });
   const [pw, setPw] = useState({ current: '', password: '', confirm: '' });
   const change = useMutation({
     mutationFn: () => {
@@ -229,11 +233,14 @@ export default function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Ajustes" description="Servidor, seguridad de tu cuenta y acceso al panel." />
-      <div className="mb-4">
-        <MainDomainCard />
-      </div>
+      <PageHeader title="Ajustes" description={staff ? 'Servidor, seguridad de tu cuenta y acceso al panel.' : 'Contraseña, verificación en dos pasos y sesiones de tu cuenta.'} />
+      {staff && (
+        <div className="mb-4">
+          <MainDomainCard />
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-2">
+        {staff && (
         <Card title="Servidor">
           {s.isLoading ? (
             <Spinner />
@@ -263,6 +270,7 @@ export default function SettingsPage() {
             Para cambiarlos edita <code className="font-mono">/etc/hostpanel/hostpanel.env</code> y ejecuta <code className="font-mono">sudo hostpanel restart</code>.
           </p>
         </Card>
+        )}
 
         <Card title="Cambiar contraseña">
           <form
@@ -290,11 +298,12 @@ export default function SettingsPage() {
         </Card>
 
         <TwoFactor />
-        <PanelAccess />
+        {staff && <PanelAccess />}
         <div className="lg:col-span-2">
           <Sessions />
         </div>
 
+        {staff && (
         <Card title="Registro de actividad" padded={false} className="lg:col-span-2">
           <div className="max-h-[420px] overflow-y-auto">
             <Table head={['Cuándo', 'Usuario', 'Acción', 'Objeto', 'IP']}>
@@ -310,6 +319,7 @@ export default function SettingsPage() {
             </Table>
           </div>
         </Card>
+        )}
       </div>
     </>
   );

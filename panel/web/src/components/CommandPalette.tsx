@@ -15,7 +15,7 @@ export interface PaletteItem {
 }
 
 /** Ctrl/⌘ + K: jump to any page, site, domain, bucket or database. */
-export function CommandPalette({ open, onClose, pages }: { open: boolean; onClose: () => void; pages: PaletteItem[] }) {
+export function CommandPalette({ open, onClose, pages, staff = true }: { open: boolean; onClose: () => void; pages: PaletteItem[]; staff?: boolean }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -25,12 +25,12 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
 
   const sites = useQuery({ queryKey: ['sites'], queryFn: () => api.get<Site[]>('/api/sites'), enabled: open, staleTime: 30_000 });
   const domains = useQuery({ queryKey: ['domains'], queryFn: () => api.get<Domain[]>('/api/domains'), enabled: open, staleTime: 30_000 });
-  const buckets = useQuery({ queryKey: ['buckets'], queryFn: () => api.get<Bucket[]>('/api/buckets'), enabled: open, staleTime: 30_000 });
+  const buckets = useQuery({ queryKey: ['buckets'], queryFn: () => api.get<Bucket[]>('/api/buckets'), enabled: open && staff, staleTime: 30_000 });
   const dbs = useQuery({ queryKey: ['databases'], queryFn: () => api.get<DatabaseInfo[]>('/api/databases'), enabled: open, staleTime: 30_000 });
-  const workers = useQuery({ queryKey: ['workers'], queryFn: () => api.get<Worker[]>('/api/workers'), enabled: open, staleTime: 30_000 });
-  const nosql = useQuery({ queryKey: ['nosql'], queryFn: () => api.get<NosqlDatabase[]>('/api/nosql'), enabled: open, staleTime: 30_000 });
-  const lbs = useQuery({ queryKey: ['load-balancers'], queryFn: () => api.get<LoadBalancer[]>('/api/load-balancers'), enabled: open, staleTime: 30_000 });
-  const queues = useQuery({ queryKey: ['queues'], queryFn: () => api.get<Queue[]>('/api/queues'), enabled: open, staleTime: 30_000 });
+  const workers = useQuery({ queryKey: ['workers'], queryFn: () => api.get<Worker[]>('/api/workers'), enabled: open && staff, staleTime: 30_000 });
+  const nosql = useQuery({ queryKey: ['nosql'], queryFn: () => api.get<NosqlDatabase[]>('/api/nosql'), enabled: open && staff, staleTime: 30_000 });
+  const lbs = useQuery({ queryKey: ['load-balancers'], queryFn: () => api.get<LoadBalancer[]>('/api/load-balancers'), enabled: open && staff, staleTime: 30_000 });
+  const queues = useQuery({ queryKey: ['queues'], queryFn: () => api.get<Queue[]>('/api/queues'), enabled: open && staff, staleTime: 30_000 });
 
   const items = useMemo<PaletteItem[]>(
     () => [

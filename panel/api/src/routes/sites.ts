@@ -18,6 +18,7 @@ import { phpErrorLog } from '../services/system.ts';
 import { resetWordPressPassword, setPendingAdminPassword, WP_LOCALES, wpApp, type WordPressApp } from '../services/wordpress.ts';
 import type { DatabaseRow } from '../db.ts';
 import { forgetStaging } from '../services/wptoolkit.ts';
+import { scopeOf } from '../access.ts';
 
 const wordpressInput = z.object({
   name: z.string().trim().min(1).max(80),
@@ -133,8 +134,12 @@ function assertHostsFree(hosts: string[], exceptSiteId?: number) {
 }
 
 export default async function siteRoutes(app: FastifyInstance) {
-  app.get('/api/sites', async () => {
-    const sites = all<SiteRow>('SELECT * FROM sites ORDER BY name');
+  app.get('/api/sites', async (req) => {
+    const client = scopeOf(req);
+    const sites =
+      client === null
+        ? all<SiteRow>('SELECT * FROM sites ORDER BY name')
+        : all<SiteRow>('SELECT s.* FROM sites s JOIN domains d ON d.id = s.domain_id WHERE d.client_id = ? ORDER BY s.name', client);
     const last = all<DeploymentRow>(
       'SELECT d.* FROM deployments d JOIN (SELECT site_id, MAX(id) id FROM deployments GROUP BY site_id) m ON m.id = d.id',
     );
@@ -171,7 +176,15 @@ export default async function siteRoutes(app: FastifyInstance) {
       run('DELETE FROM sites WHERE id = ?', id);
       throw err;
     }
-    const dbId = run('INSERT INTO databases (name, username, note, password_enc) VALUES (?, ?, ?, ?)', dbName, dbName, `WordPress: ${body.name}`, encrypt(dbPassword)).id;
+    // The database belongs to whoever owns the domain (a reseller's client, or nobody).
+    const dbId = run(
+      'INSERT INTO databases (name, username, note, password_enc, client_id) VALUES (?, ?, ?, ?, ?)',
+      dbName,
+      dbName,
+      `WordPress: ${body.name}`,
+      encrypt(dbPassword),
+      domain?.client_id ?? null,
+    ).id;
     const app: WordPressApp = {
       database_id: dbId,
       db_name: dbName,

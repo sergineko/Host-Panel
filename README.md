@@ -29,6 +29,7 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
 - **Asistente de primer arranque**: cuenta de administrador segura, 2FA, dominio principal (DNS, nameservers, correo) y zona horaria
 - **2FA** compatible con Contraseñas de Apple, Microsoft Authenticator, Google Authenticator, 1Password, Bitwarden y Authy, con códigos de recuperación
+- **Modo reseller**: cuentas de cliente que solo ven y gestionan los dominios asignados (DNS, correo, seguridad, sitios, archivos, copias) y sus bases de datos; equipo con acceso completo; suspensión de cuentas
 - Sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 
 Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); hoja de ruta en [PLAN.md](PLAN.md).
@@ -123,6 +124,21 @@ la IP del servidor apuntando a `mail.<principal>`.
   `MX`, `SPF`, `DKIM`, `DMARC`, `MTA-STS`, informe TLS, `SRV` de IMAP/SMTP, `autoconfig`/`autodiscover` y
   `webmail.<dominio>`. Cualquier buzón que crees funciona sin tocar el DNS.
 - Certificados SSL de Let's Encrypt en cuanto el DNS apunta al servidor.
+
+## Clientes y equipo (modo reseller)
+
+En **Administración → Clientes**:
+
+| Rol | Qué puede hacer |
+|---|---|
+| **Titular** | Todo. Es la cuenta creada en la configuración inicial |
+| **Equipo** | Todo menos gestionar al titular y a otros miembros del equipo |
+| **Cliente** | Solo sus dominios (DNS, correo, seguridad, sitios web, archivos, copias, cron, SFTP, WordPress) y sus bases de datos. No puede añadir ni borrar dominios ni publicar en otros servidores |
+
+- Cada **cuenta de cliente** puede tener varios accesos y es la unidad que se factura: los clientes **activos** cuentan, los suspendidos no.
+- Al **suspender** una cuenta, sus usuarios salen del panel al momento; sus webs y correo siguen funcionando.
+- Al **eliminar** una cuenta, sus dominios y bases de datos vuelven al titular (no se borra nada alojado).
+- Los permisos se comprueban en la API, no solo en la interfaz: un cliente que llame a una ruta que no tiene asignada recibe un error, y cualquier ruta nueva queda cerrada para clientes hasta permitirla en `panel/api/src/access.ts`.
 
 ## Comandos
 

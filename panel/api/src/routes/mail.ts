@@ -5,6 +5,7 @@ import { all, audit, get, type DomainRow } from '../db.ts';
 import { randomPassword } from '../lib/crypto.ts';
 import { badRequest, parse } from '../lib/validate.ts';
 import * as mail from '../services/mail.ts';
+import { scopeOf } from '../access.ts';
 
 const email = z.string().trim().toLowerCase().email('Email no válido');
 
@@ -18,10 +19,17 @@ function assertMailDomain(address: string) {
 export default async function mailRoutes(app: FastifyInstance) {
   app.get('/api/mail', async (req) => {
     const { domain } = parse(z.object({ domain: z.string().optional() }), req.query);
-    const domains = all<DomainRow>('SELECT * FROM domains WHERE mail_enabled = 1 ORDER BY name');
+    const client = scopeOf(req);
+    const domains =
+      client === null
+        ? all<DomainRow>('SELECT * FROM domains WHERE mail_enabled = 1 ORDER BY name')
+        : all<DomainRow>('SELECT * FROM domains WHERE mail_enabled = 1 AND client_id = ? ORDER BY name', client);
+    const own = new Set(domains.map((d) => d.name));
+    // A client asking for a domain that isn't theirs gets nothing.
+    const boxes = domains.length && (!domain || client === null || own.has(domain)) ? await mail.listMailboxes(domain) : [];
     return {
       domains: domains.map((d) => ({ id: d.id, name: d.name })),
-      mailboxes: domains.length ? await mail.listMailboxes(domain) : [],
+      mailboxes: client === null ? boxes : boxes.filter((b) => own.has(b.email.split('@').pop()!.toLowerCase())),
       server: {
         hostname: config.mailHostname,
         // Each mail domain also gets its own webmail.<domain> address.

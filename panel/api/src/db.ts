@@ -419,6 +419,29 @@ const migrations: string[] = [
   ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Reseller mode. A client account is what the licence holder bills; it can have several
+  -- logins and owns domains (with their sites, mail, DNS and security) and databases.
+  CREATE TABLE clients (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  -- owner = licence holder (everything) · admin = team member · client = scoped to its account
+  ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'owner';
+  ALTER TABLE users ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE;
+  ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN last_login_at TEXT;
+  ALTER TABLE domains ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
+  ALTER TABLE databases ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
+  CREATE INDEX domains_client ON domains(client_id);
+  CREATE INDEX databases_client ON databases(client_id);
+  CREATE INDEX users_client ON users(client_id);
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };
@@ -465,6 +488,7 @@ export interface DomainRow {
   name: string;
   dns_enabled: number;
   mail_enabled: number;
+  client_id: number | null;
   created_at: string;
 }
 export interface SiteRow {
@@ -642,6 +666,16 @@ export interface DatabaseRow {
   note: string;
   password_enc: string;
   remote_hosts: string;
+  client_id: number | null;
+  created_at: string;
+}
+export interface ClientRow {
+  id: number;
+  name: string;
+  email: string;
+  company: string;
+  notes: string;
+  status: 'active' | 'suspended';
   created_at: string;
 }
 export interface ApiTokenRow {

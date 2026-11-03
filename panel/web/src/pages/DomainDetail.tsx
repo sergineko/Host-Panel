@@ -7,6 +7,7 @@ import { api, type DnsRecord, type Domain } from '../lib/api';
 import { Badge, Button, Card, ConfirmButton, Copyable, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, Table, Tabs, Td } from '../components/ui';
 import { SecurityPanel } from '../components/SecurityPanel';
 import { DomainConnection } from '../components/Connection';
+import { isStaffRole, useMe } from '../lib/me';
 
 interface DomainDetailData extends Omit<Domain, 'sites'> {
   nameservers: string[];
@@ -302,6 +303,8 @@ export default function DomainDetail() {
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') ?? 'connect') as 'connect' | 'dns' | 'security' | 'mail' | 'sites';
   const q = useQuery({ queryKey: ['domain', id], queryFn: () => api.get<DomainDetailData>(`/api/domains/${id}`) });
+  const me = useMe();
+  const staff = isStaffRole(me.data?.role);
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
@@ -312,6 +315,7 @@ export default function DomainDetail() {
       <PageHeader
         title={d.name}
         actions={
+          staff && (
           <ConfirmButton
             variant="danger"
             title={`Eliminar ${d.name}`}
@@ -326,6 +330,7 @@ export default function DomainDetail() {
           >
             Eliminar
           </ConfirmButton>
+          )
         }
       />
       <Tabs

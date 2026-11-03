@@ -26,10 +26,12 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  Users,
   X,
   Zap,
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { clientCanOpen, isStaffRole, ROLE_LABEL, type Role } from '../lib/me';
 import { CommandPalette, type PaletteItem } from './CommandPalette';
 import { SectionContext, Spinner, cx, type Section } from './ui';
 
@@ -67,6 +69,7 @@ export const nav: NavItem[] = [
   { to: '/proxy', label: 'Proxy inverso', icon: <ArrowLeftRight />, group: 'Red', keywords: 'caddy rutas redirecciones' },
   { to: '/security', label: 'Seguridad y WAF', icon: <ShieldCheck />, group: 'Red', keywords: 'firewall ip bloqueo ataque waf' },
   { to: '/servers', label: 'Servidores', icon: <Server />, group: 'Red', keywords: 'vps nodos' },
+  { to: '/clients', label: 'Clientes', icon: <Users />, group: 'Administración', keywords: 'reseller usuarios equipo cuentas facturación permisos' },
   { to: '/analytics', label: 'Analítica', icon: <Activity />, group: 'Administración', keywords: 'tráfico visitas peticiones' },
   { to: '/system', label: 'Sistema', icon: <Cpu />, group: 'Administración', keywords: 'actualizaciones php node versiones' },
   { to: '/settings', label: 'Ajustes', icon: <Settings />, group: 'Administración', keywords: 'contraseña 2fa sesiones' },
@@ -156,7 +159,10 @@ function sectionFor(pathname: string): Section | null {
   };
 }
 
-export function Layout({ username }: { username: string }) {
+export function Layout({ username, role, clientName }: { username: string; role: Role; clientName?: string | null }) {
+  const staff = isStaffRole(role);
+  // Clients only get their own sections (the API enforces the same).
+  const visibleNav = useMemo(() => (staff ? nav : nav.filter((n) => clientCanOpen(n.to))), [staff]);
   const [open, setOpen] = useState(false);
   const [palette, setPalette] = useState(false);
   const qc = useQueryClient();
@@ -165,6 +171,7 @@ export function Layout({ username }: { username: string }) {
   const updates = useQuery({
     queryKey: ['updates'],
     queryFn: () => api.get<{ components: { updateAvailable: boolean }[] }>('/api/updates'),
+    enabled: staff,
     staleTime: 3600_000,
     refetchInterval: 3600_000,
   });
@@ -184,21 +191,21 @@ export function Layout({ username }: { username: string }) {
   useEffect(() => setOpen(false), [location.pathname]);
 
   const pages = useMemo<PaletteItem[]>(
-    () => nav.map((n) => ({ id: `page-${n.to}`, label: n.label, hint: n.keywords, icon: <span className="[&>svg]:size-4">{n.icon}</span>, to: n.to, group: 'Páginas' })),
-    [],
+    () => visibleNav.map((n) => ({ id: `page-${n.to}`, label: n.label, hint: n.keywords, icon: <span className="[&>svg]:size-4">{n.icon}</span>, to: n.to, group: 'Páginas' })),
+    [visibleNav],
   );
   const section = useMemo(() => sectionFor(location.pathname), [location.pathname]);
   const { collapsed, toggle } = useCollapsedGroups();
 
   const groups = useMemo(() => {
     const out: { name?: string; items: NavItem[] }[] = [];
-    for (const item of nav) {
+    for (const item of visibleNav) {
       const last = out.at(-1);
       if (last && last.name === item.group) last.items.push(item);
       else out.push({ name: item.group, items: [item] });
     }
     return out;
-  }, []);
+  }, [visibleNav]);
 
   const logout = async () => {
     await api.post('/api/auth/logout');
@@ -281,7 +288,7 @@ export function Layout({ username }: { username: string }) {
           <div className="grid size-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-surface-2 to-border text-[12px] font-semibold uppercase">{username.slice(0, 1)}</div>
           <div className="min-w-0">
             <div className="truncate text-[13px] font-medium">{username}</div>
-            <div className="text-xs text-muted">Administrador</div>
+            <div className="truncate text-xs text-muted">{role === 'client' && clientName ? clientName : ROLE_LABEL[role]}</div>
           </div>
         </div>
         <button
@@ -343,7 +350,7 @@ export function Layout({ username }: { username: string }) {
           </Suspense>
         </main>
       </SectionContext.Provider>
-      <CommandPalette open={palette} onClose={() => setPalette(false)} pages={pages} />
+      <CommandPalette open={palette} onClose={() => setPalette(false)} pages={pages} staff={staff} />
     </div>
   );
 }

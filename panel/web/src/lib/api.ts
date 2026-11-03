@@ -36,6 +36,8 @@ export interface Domain {
   name: string;
   dns_enabled: number;
   mail_enabled: number;
+  client_id?: number | null;
+  client_name?: string | null;
   created_at: string;
   sites?: number;
 }
@@ -286,6 +288,7 @@ export interface DatabaseInfo {
   size: number;
   has_password: boolean;
   remote_hosts: string[];
+  client_id?: number | null;
   created_at: string;
   api_url?: string;
   host?: string;
@@ -511,4 +514,39 @@ export interface Delegation {
   mail_ok: boolean;
   identity: ServerIdentity;
   records: DnsRecord[];
+}
+
+// --- reseller mode --------------------------------------------------------------------
+
+export interface ClientAccount {
+  id: number;
+  name: string;
+  email: string;
+  company: string;
+  notes: string;
+  status: 'active' | 'suspended';
+  created_at: string;
+  domains?: number;
+  sites?: number;
+  users?: number;
+  databases?: number;
+}
+
+export interface PanelUser {
+  id: number;
+  username: string;
+  email: string;
+  role: 'owner' | 'admin' | 'client';
+  client_id: number | null;
+  client_name: string | null;
+  disabled: boolean;
+  totp: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface ClientDetail extends Omit<ClientAccount, 'domains' | 'databases' | 'users'> {
+  domains: { id: number; name: string }[];
+  databases: { id: number; name: string }[];
+  users: PanelUser[];
 }

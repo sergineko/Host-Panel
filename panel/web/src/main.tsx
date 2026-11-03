@@ -1,17 +1,20 @@
 import { StrictMode, Suspense, lazy, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import './index.css';
-import { api, ApiError } from './lib/api';
+import { ApiError } from './lib/api';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import { clientCanOpen, isStaffRole, useMe } from './lib/me';
 
 // Every other page is a separate chunk, loaded on first visit (smaller initial download).
 const Setup = lazy(() => import('./pages/Setup'));
+const Clients = lazy(() => import('./pages/Clients'));
+const ClientHome = lazy(() => import('./pages/ClientHome'));
 const Domains = lazy(() => import('./pages/Domains'));
 const DomainDetail = lazy(() => import('./pages/DomainDetail'));
 const Sites = lazy(() => import('./pages/Sites'));
@@ -50,7 +53,8 @@ const queryClient = new QueryClient({
 
 function Protected() {
   const navigate = useNavigate();
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<{ username: string; totp: boolean; setup_pending: boolean }>('/api/auth/me') });
+  const location = useLocation();
+  const me = useMe();
   useEffect(() => {
     const onUnauthorized = () => navigate('/login');
     window.addEventListener('hp:unauthorized', onUnauthorized);
@@ -61,7 +65,15 @@ function Protected() {
   if (me.isError) return <Navigate to="/login" replace />;
   // First-run wizard not finished: nothing else until it is.
   if (me.data!.setup_pending) return <Navigate to="/setup" replace />;
-  return <Layout username={me.data!.username} />;
+  // A client opening a staff-only section (old link, typed URL) goes back to its home.
+  if (!isStaffRole(me.data!.role) && !clientCanOpen(location.pathname)) return <Navigate to="/" replace />;
+  return <Layout username={me.data!.username} role={me.data!.role} clientName={me.data!.client?.name} />;
+}
+
+/** Owner and team see the server overview; a client sees its own resources. */
+function Home() {
+  const me = useMe();
+  return isStaffRole(me.data?.role) ? <Dashboard /> : <ClientHome />;
 }
 
 function ThemedToaster() {
@@ -89,7 +101,8 @@ createRoot(document.getElementById('root')!).render(
             }
           />
           <Route element={<Protected />}>
-            <Route index element={<Dashboard />} />
+            <Route index element={<Home />} />
+            <Route path="clients" element={<Clients />} />
             <Route path="domains" element={<Domains />} />
             <Route path="domains/:id" element={<DomainDetail />} />
             <Route path="sites" element={<Sites />} />

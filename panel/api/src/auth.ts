@@ -18,8 +18,17 @@ import { config } from './config.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user?: { id: number; username: string };
+    user?: SessionUser;
   }
+}
+
+export type Role = 'owner' | 'admin' | 'client';
+export interface SessionUser {
+  id: number;
+  username: string;
+  role: Role;
+  /** Client account the user belongs to (only for role "client"). */
+  clientId: number | null;
 }
 
 const COOKIE = 'hp_session';
@@ -79,6 +88,13 @@ function checkSecondFactor(user: SecondFactorUser, code: string) {
   return { ok: false as const, reason: 'Código de verificación incorrecto' };
 }
 
+/** Why a user can't use the panel right now, or null. */
+function loginBlocked(u: { disabled: number; role: Role; client_id: number | null; client_status: string | null }) {
+  if (u.disabled) return 'Esta cuenta está desactivada. Contacta con el administrador del servidor.';
+  if (u.role === 'client' && (!u.client_id || u.client_status !== 'active')) return 'El acceso de esta cuenta de cliente está suspendido. Contacta con tu proveedor.';
+  return null;
+}
+
 /** Opens a session for a user and sets the cookie. */
 export function startSession(req: FastifyRequest, reply: FastifyReply, userId: number) {
   const token = randomToken();
@@ -116,12 +132,18 @@ export async function authPlugin(app: FastifyInstance) {
     if (PUBLIC_PREFIXES.some((p) => req.url.startsWith(p))) return;
     const token = req.cookies[COOKIE];
     if (!token) throw new HttpError(401, 'No autenticado');
-    const session = get<{ user_id: number; expires_at: number; username: string }>(
-      'SELECT s.user_id, s.expires_at, u.username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ?',
+    const session = get<{ user_id: number; expires_at: number; username: string; role: Role; client_id: number | null; disabled: number; client_status: string | null }>(
+      `SELECT s.user_id, s.expires_at, u.username, u.role, u.client_id, u.disabled, c.status client_status
+       FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN clients c ON c.id = u.client_id WHERE s.id = ?`,
       sha256(token),
     );
     if (!session || session.expires_at < Date.now()) throw new HttpError(401, 'Sesión caducada');
-    req.user = { id: session.user_id, username: session.username };
+    const blocked = loginBlocked(session);
+    if (blocked) {
+      run('DELETE FROM sessions WHERE id = ?', sha256(token));
+      throw new HttpError(401, blocked);
+    }
+    req.user = { id: session.user_id, username: session.username, role: session.role, clientId: session.role === 'client' ? session.client_id : null };
     // Sliding expiration.
     if (session.expires_at - Date.now() < SESSION_TTL / 2) {
       run('UPDATE sessions SET expires_at = ? WHERE id = ?', Date.now() + SESSION_TTL, sha256(token));
@@ -133,14 +155,20 @@ export async function authPlugin(app: FastifyInstance) {
     checkThrottle(ip);
     const body = parse(z.object({ username: z.string().min(1).max(200), password: z.string().min(1).max(512), code: z.string().max(40).optional() }), req.body);
     const username = body.username.trim().toLowerCase();
-    const user = get<SecondFactorUser & { username: string; password_hash: string }>(
-      'SELECT id, username, password_hash, totp_secret, totp_last_step, recovery_codes FROM users WHERE lower(username) = ?',
+    const user = get<SecondFactorUser & { username: string; password_hash: string; role: Role; client_id: number | null; disabled: number; client_status: string | null }>(
+      `SELECT u.id, u.username, u.password_hash, u.totp_secret, u.totp_last_step, u.recovery_codes, u.role, u.client_id, u.disabled, c.status client_status
+       FROM users u LEFT JOIN clients c ON c.id = u.client_id WHERE lower(u.username) = ?`,
       username,
     );
     if (!user || !(await verifyPassword(body.password, user.password_hash))) {
       registerFailure(ip);
       audit(username, 'login.failed', '', ip);
       throw new HttpError(401, 'Usuario o contraseña incorrectos');
+    }
+    const blocked = loginBlocked(user);
+    if (blocked) {
+      audit(user.username, 'login.blocked', blocked, ip);
+      throw new HttpError(403, blocked);
     }
     let recoveryLeft: number | undefined;
     if (user.totp_secret) {
@@ -159,6 +187,7 @@ export async function authPlugin(app: FastifyInstance) {
     }
     failures.delete(ip);
     startSession(req, reply, user.id);
+    run("UPDATE users SET last_login_at = datetime('now') WHERE id = ?", user.id);
     audit(user.username, 'login', '', ip);
     return { username: user.username, recovery_codes_left: recoveryLeft };
   });
@@ -177,8 +206,10 @@ export async function authPlugin(app: FastifyInstance) {
       email: u?.email ?? '',
       totp: !!u?.totp_secret,
       recovery_codes_left: (JSON.parse(u?.recovery_codes || '[]') as string[]).length,
-      /** First-run wizard not finished yet: the interface sends the user to /setup. */
-      setup_pending: getSetting('setup_completed') === '0',
+      role: req.user!.role,
+      client: req.user!.clientId ? (get<{ id: number; name: string }>('SELECT id, name FROM clients WHERE id = ?', req.user!.clientId) ?? null) : null,
+      /** First-run wizard not finished yet: the interface sends the owner to /setup. */
+      setup_pending: req.user!.role === 'owner' && getSetting('setup_completed') === '0',
     };
   });
 

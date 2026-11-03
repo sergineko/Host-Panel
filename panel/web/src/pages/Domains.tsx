@@ -7,6 +7,7 @@ import { api, type Domain } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { Badge, Button, Callout, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Toggle } from '../components/ui';
 import { MainDomainCard, useIdentity } from '../components/Connection';
+import { isStaffRole, useMe } from '../lib/me';
 
 export default function Domains() {
   const qc = useQueryClient();
@@ -17,6 +18,8 @@ export default function Domains() {
   const [dns, setDns] = useState(true);
   const [mail, setMail] = useState(true);
   const identity = useIdentity();
+  const me = useMe();
+  const staff = isStaffRole(me.data?.role);
   const mailReady = identity.data?.mail_ready ?? false;
 
   const create = useMutation({
@@ -38,12 +41,14 @@ export default function Domains() {
         title="Dominios y DNS"
         description="Cada dominio tiene su zona DNS, reglas de seguridad y, opcionalmente, correo."
         actions={
-          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setOpen(true)}>
-            Añadir dominio
-          </Button>
+          staff && (
+            <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setOpen(true)}>
+              Añadir dominio
+            </Button>
+          )
         }
       />
-      {identity.data && !identity.data.nameservers_ready && (
+      {staff && identity.data && !identity.data.nameservers_ready && (
         <div className="mb-5">
           <MainDomainCard />
         </div>
@@ -59,15 +64,17 @@ export default function Domains() {
           <Empty
             icon={<Globe className="size-6" />}
             title="Sin dominios"
-            description="Añade tu primer dominio y apunta sus nameservers a este servidor."
+            description={staff ? 'Añade tu primer dominio y apunta sus nameservers a este servidor.' : 'Tu proveedor te asignará tus dominios.'}
             action={
-              <Button variant="primary" onClick={() => setOpen(true)}>
-                Añadir dominio
-              </Button>
+              staff && (
+                <Button variant="primary" onClick={() => setOpen(true)}>
+                  Añadir dominio
+                </Button>
+              )
             }
           />
         ) : (
-          <Table head={['Dominio', 'Servicios', 'Sitios', 'Añadido', '']}>
+          <Table head={['Dominio', ...(staff ? ['Cliente'] : []), 'Servicios', 'Sitios', 'Añadido', '']}>
             {q.data!.map((d) => (
               <tr key={d.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => navigate(`/domains/${d.id}`)}>
                 <Td>
@@ -75,6 +82,7 @@ export default function Domains() {
                     {d.name}
                   </Link>
                 </Td>
+                {staff && <Td className="text-muted">{d.client_name ?? '—'}</Td>}
                 <Td>
                   <div className="flex gap-1.5">
                     {d.dns_enabled ? <Badge tone="info">DNS</Badge> : <Badge>DNS externo</Badge>}

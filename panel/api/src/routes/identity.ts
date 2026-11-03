@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { audit } from '../db.ts';
 import { badRequest, idParam, notFound, parse } from '../lib/validate.ts';
 import { delegationStatus, domainById, externalRecords, mainDomainCandidates, serverIdentity, setMainDomain } from '../services/identity.ts';
+import { scopeOf } from '../access.ts';
 
 export default async function identityRoutes(app: FastifyInstance) {
-  app.get('/api/server/identity', async () => ({ ...serverIdentity(), candidates: mainDomainCandidates() }));
+  app.get('/api/server/identity', async (req) => ({ ...serverIdentity(), candidates: scopeOf(req) === null ? mainDomainCandidates() : [] }));
 
   app.post('/api/server/main-domain', async (req) => {
     const body = parse(z.object({ domain_id: z.number().int(), email: z.email('Email no válido').optional() }), req.body);
