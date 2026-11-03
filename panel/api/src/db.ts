@@ -412,6 +412,13 @@ const migrations: string[] = [
     UNIQUE (site_id, path, username)
   );
   `,
+  `
+  -- Contact email of each panel user, single-use 2FA recovery codes (sha256, JSON array) and
+  -- the last accepted TOTP time step, so an intercepted code can't be replayed.
+  ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT '';
+  ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 const { user_version: current } = db.prepare('PRAGMA user_version').get() as { user_version: number };

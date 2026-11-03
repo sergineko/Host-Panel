@@ -4,10 +4,14 @@
 #
 #    curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
 #
-#  Opciones (también como variables de entorno):
+#  Al terminar muestra un enlace de un solo uso. La primera vez que se abre, el panel pide la
+#  cuenta de administrador (usuario, contraseña segura, 2FA), el dominio principal y la zona
+#  horaria, y explica qué cambiar en el registrador del dominio.
+#
+#  Opciones (también como variables de entorno), para instalaciones desatendidas:
 #    --domain midominio.com   Dominio principal (panel.*, mail.*, ns1.*, ns2.*)   HP_DOMAIN
 #    --email  tu@correo.com   Email para Let's Encrypt                            HP_EMAIL
-#    --yes                    Sin preguntas (usa valores por defecto)            HP_YES=1
+#    --yes                    Sin preguntas                                       HP_YES=1
 #    --update                 Actualiza el panel conservando datos y secretos
 #    --keep-code              No descarga código nuevo (para cambiar solo la configuración,
 #                             por ejemplo el dominio principal desde el panel)       HP_KEEP_CODE=1
@@ -150,15 +154,10 @@ PUBLIC_IP6=$(curl -6 -fsS --max-time 4 https://api64.ipify.org 2>/dev/null || tr
 [[ $PUBLIC_IP6 == *:* ]] || PUBLIC_IP6=''
 ok "IP pública: $PUBLIC_IP${PUBLIC_IP6:+ · IPv6: $PUBLIC_IP6}"
 
-if [[ -z $DOMAIN && ! -f $ENV_FILE ]]; then
-  echo
-  info "Dominio principal del servidor: se usará para panel.<dominio>, mail.<dominio>,"
-  info "ns1.<dominio> y ns2.<dominio>. Déjalo vacío para usar solo la IP (sin correo)."
-  DOMAIN=$(ask "Dominio principal:" "")
-fi
+# A fresh install asks nothing here: the first visit to the panel asks for the main domain,
+# the contact email and the administrator account (see "Configuración inicial" at the end).
 DOMAIN=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*##; s#^www\.##')
 if [[ -n $DOMAIN && ! $DOMAIN =~ ^([a-z0-9-]+\.)+[a-z]{2,}$ ]]; then die "Dominio no válido: $DOMAIN"; fi
-if [[ -z $EMAIL ]]; then EMAIL=$(ask "Email para los certificados SSL:" "admin@${DOMAIN:-example.com}"); fi
 
 FQDN=$(hostname -f 2>/dev/null || hostname)
 if [[ -n $DOMAIN ]]; then
@@ -177,9 +176,6 @@ SECRET=${HP_SECRET:-$(rand 48)}
 PDNS_KEY=${HP_PDNS_KEY:-$(rand 40)}
 STALWART_PASSWORD=${HP_STALWART_PASSWORD:-$(rand 32)}
 ROUNDCUBE_KEY=${HP_ROUNDCUBE_KEY:-$(rand 24)}
-FIRST_INSTALL=0
-ADMIN_PASSWORD=''
-if [[ ! -f $DATA_DIR/hostpanel.db ]]; then FIRST_INSTALL=1; ADMIN_PASSWORD=$(rand 16); fi
 if [[ -f /proc/net/if_inet6 ]]; then ANY='[::]'; PDNS_LISTEN='0.0.0.0, ::'; else ANY='0.0.0.0'; PDNS_LISTEN='0.0.0.0'; fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)
 
@@ -465,7 +461,6 @@ HP_NS2=$NS2
 HP_SERVER_IP=$PUBLIC_IP
 HP_SERVER_IPV6=$PUBLIC_IP6
 HP_ADMIN_EMAIL=$EMAIL
-HP_ADMIN_USER=admin
 HP_SECRET=$SECRET
 HP_PDNS_KEY=$PDNS_KEY
 HP_STALWART_PASSWORD=$STALWART_PASSWORD
@@ -494,10 +489,6 @@ q systemctl daemon-reload
 q systemctl enable hostpanel
 
 NODE_RUN=(node --disable-warning=ExperimentalWarning src/cli.ts)
-if [[ $FIRST_INSTALL == 1 ]]; then
-  # The admin password is shown once at the end and only its hash is stored.
-  (cd "$APP_DIR/panel/api" && q "${NODE_RUN[@]}" reset-password admin "$ADMIN_PASSWORD")
-fi
 q systemctl restart hostpanel
 for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health 2>/dev/null && break; sleep 1; done
 curl -fsS -o /dev/null http://127.0.0.1:3000/api/health || die "El panel no arrancó: journalctl -u hostpanel -n 50"
@@ -523,18 +514,36 @@ ok "UFW: SSH ($SSH_PORT), web 80/443, panel 2087, DNS 53${MAIL_HOSTNAME:+, corre
 apt_install unattended-upgrades || true
 ok "Actualizaciones de seguridad automáticas"
 
+# One-time link to the first-run wizard while there is no administrator yet.
+SETUP_URLS=''
+SETUP_URLS=$(cd "$APP_DIR/panel/api" && "${NODE_RUN[@]}" setup-link 2>>"$INSTALL_LOG") || SETUP_URLS=''
+
 # =====================================================================================
 trap - ERR
 echo
 printf '%s%s  ✔ HostPanel está listo%s\n\n' "$G" "$B" "$N"
-printf '  %sPanel%s        https://%s:2087   (certificado interno: acepta el aviso del navegador)\n' "$B" "$N" "$PUBLIC_IP"
-if [[ -n $PANEL_DOMAIN ]]; then printf '               https://%s   (en cuanto el DNS apunte aquí)\n' "$PANEL_DOMAIN"; fi
-if [[ $FIRST_INSTALL == 1 ]]; then
-  printf '  %sUsuario%s      admin\n' "$B" "$N"
-  printf '  %sContraseña%s   %s\n' "$B" "$N" "$ADMIN_PASSWORD"
-  printf '               %sGuárdala ahora: no se volverá a mostrar (sudo hostpanel reset-password).%s\n' "$Y" "$N"
+if [[ -n $SETUP_URLS ]]; then
+  SETUP_IP_URL=$(head -n 1 <<<"$SETUP_URLS")
+  cat <<EOF
+  ${B}Configuración inicial${N}: abre este enlace en tu navegador para terminar.
+
+      ${O}${SETUP_IP_URL}${N}
+
+  El navegador avisará del certificado (es interno hasta que tengas dominio): acéptalo.
+  El panel te pedirá:
+    · tu cuenta de administrador (usuario poco evidente y contraseña segura)
+    · la verificación en dos pasos (Contraseñas de Apple, Microsoft Authenticator…)
+    · el dominio principal del servidor y la zona horaria
+  y te dirá qué cambiar en el registrador del dominio (glue records y nameservers).
+
+  ${Y}El enlace es personal y de un solo uso (caduca en 7 días).${N}
+  ¿Lo has perdido?  sudo hostpanel setup-link
+EOF
+else
+  printf '  %sPanel%s        https://%s:2087   (certificado interno: acepta el aviso del navegador)\n' "$B" "$N" "$PUBLIC_IP"
+  if [[ -n $PANEL_DOMAIN ]]; then printf '               https://%s   (en cuanto el DNS apunte aquí)\n' "$PANEL_DOMAIN"; fi
 fi
-if [[ -n $DOMAIN ]]; then
+if [[ -n $DOMAIN && -z $SETUP_URLS ]]; then
   cat <<EOF
 
   ${B}Siguiente paso: DNS${N}

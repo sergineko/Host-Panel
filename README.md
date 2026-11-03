@@ -27,7 +27,9 @@ Panel de hosting tipo **cPanel / Webmin** con funciones tipo **Cloudflare**, ins
 - **Varias versiones de PHP** (7.4 → 8.5) por sitio, instalables desde el panel y con avisos de cada parche (8.5.10 → 8.5.12)
 - **Varias versiones de Node.js** a la vez: cada sitio elige una versión exacta, la última de una rama (`22.x`), la del sistema o **«siempre la última instalada»**
 - **Actualizador** del panel y de todos los componentes, con actualizaciones nocturnas opcionales
-- **2FA**, sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
+- **Asistente de primer arranque**: cuenta de administrador segura, 2FA, dominio principal (DNS, nameservers, correo) y zona horaria
+- **2FA** compatible con Contraseñas de Apple, Microsoft Authenticator, Google Authenticator, 1Password, Bitwarden y Authy, con códigos de recuperación
+- Sesiones, restricción de IPs del panel, fail2ban, **analítica** de tráfico en vivo, auditoría
 
 Arquitectura y servicios en [Cómo está construido](#cómo-está-construido); hoja de ruta en [PLAN.md](PLAN.md).
 
@@ -39,19 +41,28 @@ Servidor limpio con **Ubuntu 22.04 / 24.04** o **Debian 12 / 13** (x86_64 o arm6
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
 ```
 
-El instalador pregunta el dominio principal (por ejemplo `midominio.com`) y el email para los certificados.
-Sin preguntas:
+El instalador no pregunta nada. Al terminar muestra un **enlace de un solo uso**
+(`https://IP:2087/setup?token=…`, caduca en 7 días; `sudo hostpanel setup-link` genera otro).
+
+### Configuración inicial
+
+La primera vez que se abre el panel, un asistente obligatorio pide:
+
+| Paso | Qué pide | Por qué |
+|---|---|---|
+| 1. Cuenta | Usuario, email de contacto y contraseña | No se permiten nombres que prueban los bots (`admin`, `root`, `test`…). Contraseña de 12+ caracteres con 3 tipos de carácter, o frase de 16+; botón para generar una |
+| 2. Verificación en dos pasos | Escanear un QR y escribir el código | Recomendada (se puede omitir). Da 10 códigos de recuperación de un solo uso |
+| 3. Dominio principal | Dominio, email para Let's Encrypt y zona horaria | El servidor pasa a ser `ns1`/`ns2` (nameservers de todos tus dominios), `mail` y `panel` de ese dominio; su zona DNS se gestiona desde **Dominios → DNS** |
+| 4. DNS | Nada: muestra qué cambiar fuera | Glue records y nameservers en el registrador, PTR y puerto 25 en el proveedor del VPS, con comprobación en vivo |
+
+El enlace evita que alguien que encuentre la IP antes que tú se quede con el panel.
+
+**Sin asistente** (instalación desatendida): `--domain` y `--email` dejan el dominio configurado y el asistente solo pide la
+cuenta y el 2FA.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash -s -- --domain midominio.com --email yo@midominio.com --yes
 ```
-
-Al terminar muestra la URL del panel (`https://IP:2087`), el usuario `admin` y su contraseña.
-
-**Después de instalar**, en el registrador del dominio principal:
-1. Crea los *glue records* `ns1.midominio.com` y `ns2.midominio.com` apuntando a la IP del servidor.
-2. Cambia los nameservers del dominio a esos dos.
-3. Pide a tu proveedor el DNS inverso (PTR) de la IP → `mail.midominio.com` y que permita el puerto 25.
 
 ## Desinstalar
 
@@ -118,9 +129,10 @@ la IP del servidor apuntando a `mail.<principal>`.
 | `hostpanel status` | Estado de todos los servicios |
 | `hostpanel logs [servicio]` | Logs en vivo (`hostpanel`, `caddy`, `pdns`, `stalwart`…) |
 | `hostpanel restart [servicio\|all]` | Reinicia servicios |
+| `hostpanel setup-link` | Nuevo enlace de configuración inicial (mientras no haya cuenta) |
 | `hostpanel reset-password [usuario]` | Nueva contraseña del panel |
 | `hostpanel update [componente]` | Actualiza todo, o solo `panel`, `caddy`, `stalwart`, `roundcube`, `node`, `system` |
-| `hostpanel disable-2fa [usuario]` | Quita la verificación en dos pasos (móvil perdido) |
+| `hostpanel disable-2fa [usuario]` | Quita la verificación en dos pasos (móvil y códigos de recuperación perdidos) |
 | `hostpanel panel-access-reset` | Quita la restricción de IPs del panel |
 | `hostpanel info` | URLs y configuración |
 
@@ -333,7 +345,8 @@ Las apps Node deben escuchar en `process.env.PORT`.
 ## Desarrollo local
 
 Cualquier sistema operativo con Node 24. En modo desarrollo (`HP_DEV=1`) los comandos del sistema
-solo se registran y DNS/correo se simulan en memoria; usuario `admin`, contraseña `admin`.
+solo se registran y DNS/correo se simulan en memoria. Con una carpeta de datos vacía se abre el asistente de
+configuración inicial en `/setup` (en desarrollo no pide enlace con token).
 
 ```bash
 cd panel/api && npm install

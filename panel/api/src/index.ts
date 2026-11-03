@@ -3,7 +3,9 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { config } from './config.ts';
-import { authPlugin, ensureAdminUser } from './auth.ts';
+import { authPlugin } from './auth.ts';
+import { ensureSetupState } from './services/setup.ts';
+import setupRoutes from './routes/setup.ts';
 import { HttpError } from './lib/validate.ts';
 import { startAnalytics } from './services/analytics.ts';
 import { syncCaddy } from './services/caddy.ts';
@@ -57,6 +59,7 @@ app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
 
 await app.register(cookie);
 await authPlugin(app);
+await app.register(setupRoutes);
 await app.register(systemRoutes);
 await app.register(domainRoutes);
 await app.register(siteRoutes);
@@ -99,7 +102,7 @@ app.addHook('onSend', async (_req, reply) => {
   reply.header('Referrer-Policy', 'same-origin');
 });
 
-await ensureAdminUser();
+ensureSetupState();
 recoverInterruptedDeployments();
 recoverJobs();
 startServerHealth();

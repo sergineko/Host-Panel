@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { renderSVG } from 'uqr';
 import { Laptop, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { MainDomainCard } from '../components/Connection';
+import { StrengthMeter } from '../components/AccountFields';
+import { AUTH_APPS, RecoveryCodes, TotpEnroll } from '../components/TwoFactor';
 import { Badge, Button, Card, Copyable, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Table, Td, Textarea } from '../components/ui';
 
 interface Settings {
@@ -34,105 +35,109 @@ function browserName(ua: string) {
 
 function TwoFactor() {
   const qc = useQueryClient();
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<{ username: string; totp: boolean }>('/api/auth/me') });
-  const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null);
-  const [code, setCode] = useState('');
-  const [disableOpen, setDisableOpen] = useState(false);
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<{ username: string; totp: boolean; recovery_codes_left: number }>('/api/auth/me') });
+  const [enrollOpen, setEnrollOpen] = useState(false);
+  const [confirm, setConfirm] = useState<'disable' | 'codes' | null>(null);
   const [password, setPassword] = useState('');
-  const qr = useMemo(() => (setup ? renderSVG(setup.uri, { border: 1 }) : ''), [setup]);
-
-  const start = useMutation({ mutationFn: () => api.post<{ secret: string; uri: string }>('/api/auth/2fa/setup'), onSuccess: setSetup });
-  const enable = useMutation({
-    mutationFn: () => api.post('/api/auth/2fa/enable', { code }),
-    onSuccess: () => {
-      toast.success('Verificación en dos pasos activada');
-      setSetup(null);
-      setCode('');
-      qc.invalidateQueries({ queryKey: ['me'] });
-    },
-  });
+  const [newCodes, setNewCodes] = useState<string[] | null>(null);
+  const close = () => {
+    setConfirm(null);
+    setPassword('');
+  };
   const disable = useMutation({
     mutationFn: () => api.post('/api/auth/2fa/disable', { password }),
     onSuccess: () => {
       toast.success('Verificación en dos pasos desactivada');
-      setDisableOpen(false);
-      setPassword('');
+      close();
       qc.invalidateQueries({ queryKey: ['me'] });
     },
   });
+  const regenerate = useMutation({
+    mutationFn: () => api.post<{ recovery_codes: string[] }>('/api/auth/2fa/recovery-codes', { password }),
+    onSuccess: (r) => {
+      close();
+      setNewCodes(r.recovery_codes);
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+  });
+  const action = confirm === 'disable' ? disable : regenerate;
 
   const on = !!me.data?.totp;
+  const left = me.data?.recovery_codes_left ?? 0;
   return (
     <Card title="Verificación en dos pasos" actions={on ? <Badge tone="ok" dot>Activa</Badge> : <Badge tone="warn" dot>Desactivada</Badge>}>
       <div className="flex items-start gap-3">
         {on ? <ShieldCheck className="mt-0.5 size-5 shrink-0 text-ok" /> : <ShieldOff className="mt-0.5 size-5 shrink-0 text-warn" />}
         <p className="text-[13px] text-muted">
           {on
-            ? 'Al iniciar sesión se pide además un código de tu app de autenticación (Google Authenticator, 1Password, Authy…).'
-            : 'Protege el panel aunque alguien consiga tu contraseña: pide un código temporal de tu móvil al entrar.'}
+            ? 'Al iniciar sesión se pide además un código de tu app de autenticación.'
+            : `Protege el panel aunque alguien consiga tu contraseña. Compatible con ${AUTH_APPS}.`}
         </p>
       </div>
+      {on && (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-2 px-3 py-2 text-[13px]">
+          <span>
+            Códigos de recuperación: <strong className={left <= 2 ? 'text-danger' : ''}>{left} disponibles</strong>
+          </span>
+          <Button size="sm" onClick={() => setConfirm('codes')}>
+            Generar nuevos
+          </Button>
+        </div>
+      )}
       <div className="mt-4">
         {on ? (
-          <Button variant="danger" onClick={() => setDisableOpen(true)}>
+          <Button variant="danger" onClick={() => setConfirm('disable')}>
             Desactivar
           </Button>
         ) : (
-          <Button variant="primary" loading={start.isPending} onClick={() => start.mutate()}>
+          <Button variant="primary" onClick={() => setEnrollOpen(true)}>
             Activar
           </Button>
         )}
       </div>
 
-      <Modal
-        open={!!setup}
-        onClose={() => setSetup(null)}
-        title="Activar verificación en dos pasos"
-        footer={
-          <>
-            <Button onClick={() => setSetup(null)}>Cancelar</Button>
-            <Button variant="primary" disabled={code.length !== 6} loading={enable.isPending} onClick={() => enable.mutate()}>
-              Activar
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <p className="text-[13px] text-muted">1. Escanea el código con tu app de autenticación.</p>
-          <div className="mx-auto w-44 rounded-lg bg-white p-2" dangerouslySetInnerHTML={{ __html: qr }} />
-          <Field label="¿No puedes escanearlo? Escribe esta clave">
-            <Copyable value={setup?.secret ?? ''} />
-          </Field>
-          <Field label="2. Escribe el código que muestra la app">
-            <Input
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              inputMode="numeric"
-              placeholder="123456"
-              className="text-center font-mono text-lg tracking-[0.3em]"
-            />
-          </Field>
-          {enable.error && <ErrorBox error={enable.error} />}
-          <p className="text-xs text-muted">Si pierdes el móvil: <code className="font-mono">sudo hostpanel disable-2fa</code> en el servidor.</p>
-        </div>
+      <Modal open={enrollOpen} onClose={() => setEnrollOpen(false)} title="Activar verificación en dos pasos" wide>
+        {enrollOpen && (
+          <TotpEnroll
+            onDone={() => {
+              setEnrollOpen(false);
+              toast.success('Verificación en dos pasos activada');
+              qc.invalidateQueries({ queryKey: ['me'] });
+            }}
+          />
+        )}
+        <p className="mt-4 text-xs text-muted">
+          Si pierdes el móvil y los códigos: <code className="font-mono">sudo hostpanel disable-2fa</code> en el servidor.
+        </p>
+      </Modal>
+
+      <Modal open={!!newCodes} onClose={() => setNewCodes(null)} title="Nuevos códigos de recuperación">
+        {newCodes && <RecoveryCodes codes={newCodes} onConfirm={() => setNewCodes(null)} confirmLabel="Cerrar" />}
+        <p className="mt-3 text-xs text-muted">Los códigos anteriores ya no sirven.</p>
       </Modal>
 
       <Modal
-        open={disableOpen}
-        onClose={() => setDisableOpen(false)}
-        title="Desactivar verificación en dos pasos"
+        open={confirm !== null}
+        onClose={close}
+        title={confirm === 'disable' ? 'Desactivar verificación en dos pasos' : 'Generar nuevos códigos de recuperación'}
         footer={
           <>
-            <Button onClick={() => setDisableOpen(false)}>Cancelar</Button>
-            <Button variant="primary" className="!bg-danger !text-white" disabled={!password} loading={disable.isPending} onClick={() => disable.mutate()}>
-              Desactivar
+            <Button onClick={close}>Cancelar</Button>
+            <Button
+              variant="primary"
+              className={confirm === 'disable' ? '!bg-danger !text-white' : ''}
+              disabled={!password}
+              loading={action.isPending}
+              onClick={() => action.mutate()}
+            >
+              {confirm === 'disable' ? 'Desactivar' : 'Generar'}
             </Button>
           </>
         }
       >
-        {disable.error && <ErrorBox error={disable.error} />}
+        {action.error && <ErrorBox error={action.error} />}
         <Field label="Confirma con tu contraseña">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
         </Field>
       </Modal>
     </Card>
@@ -271,8 +276,9 @@ export default function SettingsPage() {
             <Field label="Contraseña actual">
               <Input type="password" autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
             </Field>
-            <Field label="Nueva contraseña" hint="Mínimo 10 caracteres.">
+            <Field label="Nueva contraseña" hint="Mínimo 12 caracteres combinando mayúsculas, minúsculas, números y símbolos (o una frase de 16+).">
               <Input type="password" autoComplete="new-password" value={pw.password} onChange={(e) => setPw({ ...pw, password: e.target.value })} />
+              <StrengthMeter password={pw.password} />
             </Field>
             <Field label="Repite la nueva contraseña">
               <Input type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} />

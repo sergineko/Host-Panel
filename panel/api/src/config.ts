@@ -41,8 +41,6 @@ export const config = {
   webDist: env('HP_WEB_DIST', fileURLToPath(new URL('../../web/dist', import.meta.url))),
   secret: env('HP_SECRET', 'dev-secret-change-me'),
 
-  adminUser: env('HP_ADMIN_USER', 'admin'),
-  adminPassword: env('HP_ADMIN_PASSWORD'),
   adminEmail: env('HP_ADMIN_EMAIL', 'admin@example.com'),
 
   serverIp: env('HP_SERVER_IP', '127.0.0.1'),

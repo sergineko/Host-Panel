@@ -107,15 +107,43 @@ export function totpCode(secret: string, now = Date.now()) {
   return hotp(base32Decode(secret), Math.floor(now / 30_000));
 }
 
-/** Accepts the current code and one step before/after (clock drift). */
-export function verifyTotp(secret: string, code: string, now = Date.now()) {
+/**
+ * Accepts the current code and one step before/after (clock drift). Returns the matched time
+ * step (so the caller can refuse a code that was already used) or -1.
+ */
+export function totpStep(secret: string, code: string, now = Date.now()): number {
   const clean = code.replace(/\s/g, '');
-  if (!/^\d{6}$/.test(clean)) return false;
+  if (!/^\d{6}$/.test(clean)) return -1;
   const key = base32Decode(secret);
   const step = Math.floor(now / 30_000);
-  return [-1, 0, 1].some((d) => safeEqual(hotp(key, step + d), clean));
+  for (const d of [-1, 0, 1]) if (safeEqual(hotp(key, step + d), clean)) return step + d;
+  return -1;
 }
 
+export const verifyTotp = (secret: string, code: string, now = Date.now()) => totpStep(secret, code, now) !== -1;
+
+/**
+ * otpauth:// link understood by every authenticator: Apple Passwords (iPhone, iPad, Mac),
+ * Microsoft Authenticator, Google Authenticator, 1Password, Bitwarden, Authy…
+ * SHA-1, 6 digits and 30 s are the only parameters all of them support.
+ */
 export function totpUri(secret: string, account: string, issuer = 'HostPanel') {
-  return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&period=30&digits=6`;
+  const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(account)}`;
+  return `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
+
+// --- 2FA recovery codes -------------------------------------------------------------------
+const RC_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+/** Ten single-use codes like "k7mq-2xpa-9rtd" (~70 bits each). Only their hashes are stored. */
+export function newRecoveryCodes(count = 10) {
+  return Array.from({ length: count }, () => {
+    const bytes = randomBytes(12);
+    const chars = Array.from(bytes, (b) => RC_ALPHABET[b % RC_ALPHABET.length]).join('');
+    return `${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8, 12)}`;
+  });
+}
+
+/** Lower case, no spaces or dashes: users type codes in many ways. */
+export const normalizeRecoveryCode = (code: string) => code.toLowerCase().replace(/[^a-z0-9]/g, '');
+export const hashRecoveryCode = (code: string) => sha256(`hp-recovery:${normalizeRecoveryCode(code)}`);

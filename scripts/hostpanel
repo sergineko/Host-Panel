@@ -20,6 +20,7 @@ ${B}Uso:${N} hostpanel <comando>
   status                  Estado de todos los servicios
   restart [servicio]      Reinicia el panel (o el servicio indicado, o 'all')
   logs [servicio]         Sigue los logs (hostpanel, caddy, pdns, stalwart…)
+  setup-link              Nuevo enlace para la configuración inicial (cuenta, 2FA y dominio)
   reset-password [usuario] [contraseña]
                           Restablece la contraseña del panel (genera una si no se indica)
   sync-proxy              Regenera y aplica la configuración de Caddy
@@ -59,7 +60,7 @@ case $cmd in
     ;;
   reset-password)
     need_root reset-password
-    cli reset-password "${1:-admin}" "${2:-}"
+    cli reset-password "${1:-}" "${2:-}"
     ;;
   sync-proxy)
     need_root sync-proxy
@@ -71,7 +72,11 @@ case $cmd in
     ;;
   disable-2fa)
     need_root disable-2fa
-    cli disable-2fa "${1:-admin}"
+    cli disable-2fa "${1:-}"
+    ;;
+  setup-link)
+    need_root setup-link
+    cli setup-link
     ;;
   panel-access-reset)
     need_root panel-access-reset
@@ -95,6 +100,10 @@ case $cmd in
     echo "Nameservers: $HP_NS1, $HP_NS2"
     echo "IP:          $HP_SERVER_IP ${HP_SERVER_IPV6}"
     echo "Versión:     $(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo local)"
+    if [[ -s /var/lib/hostpanel/setup-url ]]; then
+      echo
+      echo "${B}Configuración inicial pendiente:${N} $(head -n 1 /var/lib/hostpanel/setup-url)"
+    fi
     ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;
