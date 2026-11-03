@@ -26,10 +26,10 @@ export default async function licenseRoutes(app: FastifyInstance) {
   });
 
   // --- branding -----------------------------------------------------------------------------
-  app.get('/api/branding', async () => ({ ...savedBranding(), allowed: currentLicense().plan.branding }));
+  app.get('/api/branding', async () => ({ ...savedBranding(), allowed: !!currentLicense().plan?.branding }));
 
   app.put('/api/branding', async (req) => {
-    if (!currentLicense().plan.branding) throw new HttpError(402, 'La marca propia está incluida en el plan Reseller');
+    if (!currentLicense().plan?.branding) throw new HttpError(402, 'La marca propia está incluida en el plan Reseller');
     const body = parse(
       z.object({
         name: z.string().trim().min(1, 'Escribe el nombre del panel').max(40),
@@ -53,6 +53,6 @@ export default async function licenseRoutes(app: FastifyInstance) {
   app.delete('/api/branding', async (req) => {
     saveBranding(DEFAULT_BRANDING);
     audit(req.user!.username, 'branding.reset', '', req.ip);
-    return { ...savedBranding(), allowed: currentLicense().plan.branding };
+    return { ...savedBranding(), allowed: !!currentLicense().plan?.branding };
   });
 }

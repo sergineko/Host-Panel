@@ -25,7 +25,7 @@ export function savedBranding(): Branding {
 
 /** What the panel shows: the saved branding only if the plan includes it. */
 export function activeBranding(): Branding & { custom: boolean } {
-  if (!currentLicense().plan.branding) return { ...DEFAULT_BRANDING, custom: false };
+  if (!currentLicense().plan?.branding) return { ...DEFAULT_BRANDING, custom: false };
   const b = savedBranding();
   return { ...b, custom: b.name !== DEFAULT_BRANDING.name || !!b.logo || !!b.color };
 }

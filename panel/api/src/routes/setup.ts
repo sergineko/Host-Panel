@@ -7,6 +7,7 @@ import { isEmail, normalizeUsername, passwordProblem, usernameProblem } from '..
 import { hashPassword } from '../lib/crypto.ts';
 import { badRequest, domainName, HttpError, parse } from '../lib/validate.ts';
 import { mainDomainCandidates, serverIdentity } from '../services/identity.ts';
+import { hasLicense, installLicense, LICENSE_STORE_URL, PLANS } from '../services/license.ts';
 import {
   checkSetupToken,
   configureMainDomain,
@@ -40,12 +41,24 @@ export default async function setupRoutes(app: FastifyInstance) {
     required: setupPending(),
     account: userCount() > 0,
     token_required: !config.dev,
+    license: hasLicense(),
+    store_url: LICENSE_STORE_URL,
+    plans: Object.values(PLANS),
   }));
 
   app.post('/api/setup/verify', async (req) => {
     const { token } = parse(tokenBody, req.body);
     requireToken(req.ip, token);
     return { ok: true, server_ip: config.serverIp, admin_email: /@example\.com$/.test(config.adminEmail) ? '' : config.adminEmail };
+  });
+
+  // Step 0: the licence (every plan is paid). Needs the one-time link, like the account.
+  app.post('/api/setup/license', async (req) => {
+    const body = parse(tokenBody.extend({ license: z.string().min(20).max(4000) }), req.body);
+    requireToken(req.ip, body.token);
+    const license = installLicense(body.license);
+    audit(license.email, 'license.install', `${license.id} (${license.plan})`, req.ip);
+    return { plan: PLANS[license.plan], email: license.email, id: license.id };
   });
 
   // Step 1: the administrator account. Logs in straight away.
@@ -59,6 +72,7 @@ export default async function setupRoutes(app: FastifyInstance) {
       req.body,
     );
     requireToken(req.ip, body.token);
+    if (!hasLicense()) throw new HttpError(402, 'Introduce primero la licencia');
     const username = normalizeUsername(body.username);
     const problem = usernameProblem(username) ?? (isEmail(body.email) ? null : 'Escribe un correo electrónico válido') ?? passwordProblem(body.password, username);
     if (problem) throw badRequest(problem);

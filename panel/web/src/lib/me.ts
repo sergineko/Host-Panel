@@ -11,6 +11,7 @@ export interface Me {
   role: Role;
   client: { id: number; name: string } | null;
   setup_pending: boolean;
+  license_ok: boolean;
 }
 
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: () => api.get<Me>('/api/auth/me'), staleTime: 60_000 });

@@ -50,6 +50,28 @@
       },
       "port": 3010,
       "autoPort": false
+    },
+    {
+      "name": "hostpanel-fresh",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--disable-warning=ExperimentalWarning",
+        "panel/api/src/index.ts"
+      ],
+      "env": {
+        "HP_DEV": "1",
+        "HP_LISTEN_PORT": "3020",
+        "HP_INTERNAL_PORT": "3121",
+        "HP_DATA_DIR": ".dev-data/fresh-test",
+        "HP_LOG_DIR": ".dev-data/fresh-test",
+        "HP_SITES_DIR": ".dev-data/fresh-test/sites",
+        "HP_STORAGE_DIR": ".dev-data/fresh-test/storage",
+        "HP_WORKERS_DIR": ".dev-data/fresh-test/workers",
+        "HP_ENV_FILE": ".dev-data/none.env",
+        "HP_SERVER_IP": "203.0.113.10"
+      },
+      "port": 3020,
+      "autoPort": false
     }
   ]
 }

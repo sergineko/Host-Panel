@@ -15,13 +15,14 @@ export interface Plan {
   branding: boolean;
 }
 export interface LicenseInfo {
-  plan: Plan;
+  plan: Plan | null;
   license: { id: string; email: string; issued_at: string; expires_at: string | null } | null;
   used: number;
   max: number | null;
   included: number;
   extra: number;
   over_limit: boolean;
+  store_url: string;
   plans: Plan[];
 }
 
@@ -68,7 +69,7 @@ export function LicenseCard() {
   const info = q.data!;
 
   return (
-    <Card title="Licencia" icon={<BadgeCheck />} actions={<Badge tone={info.license ? 'ok' : 'warn'} dot>Plan {info.plan.name}</Badge>}>
+    <Card title="Licencia" icon={<BadgeCheck />} actions={<Badge tone={info.license ? 'ok' : 'warn'} dot>{info.plan ? `Plan ${info.plan.name}` : 'Sin licencia'}</Badge>}>
       <div className="space-y-4">
         <AccessUsage info={info} />
         {info.over_limit && (
@@ -90,7 +91,7 @@ export function LicenseCard() {
             )}
           </dl>
         ) : (
-          <p className="text-[13px] text-muted">Sin licencia el panel funciona con el plan Personal (1 acceso).</p>
+          <p className="text-[13px] text-muted">Sin licencia instalada (modo desarrollo).</p>
         )}
 
         <div className="overflow-hidden rounded-lg border border-border">
@@ -104,7 +105,7 @@ export function LicenseCard() {
             </thead>
             <tbody className="divide-y divide-border">
               {info.plans.map((p) => (
-                <tr key={p.id} className={p.id === info.plan.id ? 'bg-accent-soft' : ''}>
+                <tr key={p.id} className={p.id === info.plan?.id ? 'bg-accent-soft' : ''}>
                   <td className="px-3 py-1.5 font-medium">{p.name}</td>
                   <td className="px-3 py-1.5">{p.max === null ? `${p.included} incluidos + extra por cada uno` : p.max === 1 ? '1' : `Hasta ${p.max}`}</td>
                   <td className="px-3 py-1.5">{p.branding ? 'Sí' : '—'}</td>
@@ -253,5 +254,91 @@ export function BrandingCard() {
         </div>
       </fieldset>
     </Card>
+  );
+}
+
+/**
+ * First-run wizard and "licence needed" screen: the plans to choose from, plus "I already have a
+ * licence", which reveals the field to paste it.
+ */
+export function LicenseChooser({
+  plans,
+  storeUrl,
+  onActivate,
+  pending,
+  error,
+}: {
+  plans: Plan[];
+  storeUrl: string;
+  onActivate: (token: string) => void;
+  pending: boolean;
+  error: unknown;
+}) {
+  const [have, setHave] = useState(false);
+  const [token, setToken] = useState('');
+
+  if (have) {
+    return (
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onActivate(token);
+        }}
+      >
+        <Field label="Tu licencia" hint="La recibiste por email al contratar. Pégala completa: es un texto largo con un punto en medio.">
+          <Textarea value={token} onChange={(e) => setToken(e.target.value.trim())} className="min-h-24 font-mono text-xs" spellCheck={false} autoFocus placeholder="eyJ2IjoxLCJpZCI6…" />
+        </Field>
+        {error != null && <ErrorBox error={error} />}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Button type="button" variant="ghost" onClick={() => setHave(false)}>
+            Ver los planes
+          </Button>
+          <Button type="submit" variant="primary" disabled={token.length < 20} loading={pending}>
+            Activar licencia
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[13px] text-muted">Elige un plan para contratarlo. Cada usuario que entra al panel (tú, tu equipo y tus clientes) es un acceso.</p>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {plans.map((p) => (
+          <li key={p.id} className="flex flex-col rounded-lg border border-border p-3">
+            <div className="font-semibold">{p.name}</div>
+            <div className="mt-0.5 flex-1 text-[13px] text-muted">
+              {p.max === null ? `${p.included} accesos incluidos y extra por cada uno más` : p.max === 1 ? '1 acceso' : `Hasta ${p.max} accesos`}
+              {p.branding ? ' · tu propia marca en el panel' : ''}
+            </div>
+            {storeUrl ? (
+              <a
+                href={`${storeUrl}${storeUrl.includes('?') ? '&' : '?'}plan=${p.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex h-7 items-center justify-center rounded-md bg-accent px-2.5 text-[13px] font-medium text-accent-fg hover:brightness-110"
+              >
+                Contratar
+              </a>
+            ) : (
+              <span className="mt-2 text-xs text-muted">Contrátalo con tu proveedor</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={() => setHave(true)}
+        className="flex w-full items-center gap-3 rounded-lg border border-dashed border-border-strong p-3 text-left transition-colors hover:border-accent hover:bg-accent-soft"
+      >
+        <BadgeCheck className="size-5 shrink-0 text-accent" />
+        <span>
+          <span className="block font-medium">Ya tengo licencia</span>
+          <span className="block text-[13px] text-muted">Introdúcela para activar el panel.</span>
+        </span>
+      </button>
+    </div>
   );
 }

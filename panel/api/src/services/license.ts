@@ -11,7 +11,8 @@
  *
  * The plan comes from a licence token signed with Ed25519 by the vendor ("<payload>.<signature>",
  * both base64url). The panel only holds the public key, so a licence can't be made up or edited.
- * Without a valid licence the panel runs on the Personal plan.
+ * Every plan is paid: without a valid licence the panel can't be used (the first-run wizard asks
+ * for it before anything else; websites and mail are not affected).
  *
  * Going over the limit (for example after moving to a smaller plan) never disables anyone:
  * existing accesses keep working, but no new one can be created or re-enabled.
@@ -39,6 +40,12 @@ export const PLANS: Record<PlanId, Plan> = {
   empresa: { id: 'empresa', name: 'Empresa', max: 20, included: 20, branding: false },
   reseller: { id: 'reseller', name: 'Reseller', max: null, included: 50, branding: true },
 };
+
+/**
+ * Where customers buy a licence (shown in the first-run wizard and the "licence needed" screen).
+ * Empty: no buy button, the screen tells them to ask their provider.
+ */
+export const LICENSE_STORE_URL = '';
 
 /** Vendor public key. The private key never ships with the panel (see tools/license). */
 const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -73,15 +80,17 @@ export function verifyLicenseToken(token: string, publicKeyPem = LICENSE_PUBLIC_
   }
 }
 
-export function currentLicense(): { plan: Plan; license: LicensePayload | null } {
+export function currentLicense(): { plan: Plan | null; license: LicensePayload | null } {
   const token = getSetting('license_token');
   const license = token ? verifyLicenseToken(token) : null;
   if (license) return { plan: PLANS[license.plan], license };
   // Development only: pick a plan with HP_LICENSE_PLAN while no licence is installed.
   const devPlan = process.env.HP_LICENSE_PLAN;
   if (config.dev && devPlan && devPlan in PLANS) return { plan: PLANS[devPlan as PlanId], license: null };
-  return { plan: PLANS.personal, license: null };
+  return { plan: null, license: null };
 }
+
+export const hasLicense = () => currentLicense().plan !== null;
 
 export function installLicense(token: string) {
   const license = verifyLicenseToken(token);
@@ -105,17 +114,19 @@ export function licenseUsage() {
     plan,
     license: license ? { id: license.id, email: license.email, issued_at: license.issued_at, expires_at: license.expires_at ?? null } : null,
     used,
-    max: plan.max,
-    included: plan.included,
+    max: plan ? plan.max : 0,
+    included: plan?.included ?? 0,
     /** Billed on top of the base price (Reseller plan). */
-    extra: plan.max === null ? Math.max(0, used - plan.included) : 0,
-    over_limit: plan.max !== null && used > plan.max,
+    extra: plan && plan.max === null ? Math.max(0, used - plan.included) : 0,
+    over_limit: !!plan && plan.max !== null && used > plan.max,
+    store_url: LICENSE_STORE_URL,
   };
 }
 
 /** Throws when `adding` more accesses would go over the plan. */
 export function assertAccessAvailable(adding = 1) {
   const { plan } = currentLicense();
+  if (!plan) throw new HttpError(402, 'Necesitas una licencia para usar el panel');
   if (plan.max === null) return;
   const used = accessesInUse();
   if (used + adding > plan.max) {

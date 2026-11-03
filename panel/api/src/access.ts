@@ -14,6 +14,10 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { SessionUser } from './auth.ts';
 import { all, get, type DomainRow } from './db.ts';
 import { HttpError, matchDomain } from './lib/validate.ts';
+import { hasLicense } from './services/license.ts';
+
+/** What still works without a licence: signing in/out, the licence itself and the first-run wizard. */
+const WITHOUT_LICENSE = ['/api/auth/', '/api/license', '/api/setup/', '/api/branding/public'];
 
 export const isStaff = (u: SessionUser | undefined) => !!u && u.role !== 'client';
 export const isClient = (u: SessionUser | undefined): u is SessionUser & { clientId: number } => !!u && u.role === 'client' && u.clientId !== null;
@@ -151,7 +155,11 @@ export function clientRule(method: string, url: string): Rule | null {
 export function accessPlugin(app: FastifyInstance) {
   app.addHook('preHandler', async (req) => {
     const user = req.user;
-    if (!user || isStaff(user)) return;
+    if (!user) return;
+    if (!hasLicense() && !WITHOUT_LICENSE.some((p) => (req.routeOptions.url ?? '').startsWith(p))) {
+      throw new HttpError(402, 'El panel necesita una licencia activa');
+    }
+    if (isStaff(user)) return;
     const url = req.routeOptions.url ?? '';
     const rule = clientRule(req.method, url);
     if (!isClient(user) || !rule) throw new HttpError(403, 'Tu cuenta no tiene acceso a esta sección');

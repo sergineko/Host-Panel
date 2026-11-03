@@ -16,6 +16,7 @@ import {
 import { badRequest, HttpError, parse } from './lib/validate.ts';
 import { config } from './config.ts';
 import { activeBranding } from './services/branding.ts';
+import { hasLicense } from './services/license.ts';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -36,7 +37,7 @@ const COOKIE = 'hp_session';
 const SESSION_TTL = 12 * 3600 * 1000;
 // Token APIs (storage, databases) check their own Bearer tokens.
 // The first-run setup endpoints check the one-time setup token themselves.
-const PUBLIC_PREFIXES = ['/api/auth/login', '/api/branding/public', '/api/setup/status', '/api/setup/verify', '/api/setup/account', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/sql/v1/', '/api/nosql/v1/', '/api/queues/v1/'];
+const PUBLIC_PREFIXES = ['/api/auth/login', '/api/branding/public', '/api/setup/status', '/api/setup/verify', '/api/setup/license', '/api/setup/account', '/api/webhooks/', '/api/health', '/api/storage/v1/', '/api/sql/v1/', '/api/nosql/v1/', '/api/queues/v1/'];
 const pendingTotp = new Map<number, string>();
 
 // Brute-force protection: 8 failed attempts per IP in 15 minutes.
@@ -211,6 +212,7 @@ export async function authPlugin(app: FastifyInstance) {
       client: req.user!.clientId ? (get<{ id: number; name: string }>('SELECT id, name FROM clients WHERE id = ?', req.user!.clientId) ?? null) : null,
       /** First-run wizard not finished yet: the interface sends the owner to /setup. */
       setup_pending: req.user!.role === 'owner' && getSetting('setup_completed') === '0',
+      license_ok: hasLicense(),
     };
   });
 

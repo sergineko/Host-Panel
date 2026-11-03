@@ -16,6 +16,7 @@ import { BrandingEffect } from './lib/branding';
 const Setup = lazy(() => import('./pages/Setup'));
 const Clients = lazy(() => import('./pages/Clients'));
 const ClientHome = lazy(() => import('./pages/ClientHome'));
+const LicenseRequired = lazy(() => import('./pages/LicenseRequired'));
 const Domains = lazy(() => import('./pages/Domains'));
 const DomainDetail = lazy(() => import('./pages/DomainDetail'));
 const Sites = lazy(() => import('./pages/Sites'));
@@ -66,6 +67,13 @@ function Protected() {
   if (me.isError) return <Navigate to="/login" replace />;
   // First-run wizard not finished: nothing else until it is.
   if (me.data!.setup_pending) return <Navigate to="/setup" replace />;
+  if (!me.data!.license_ok) {
+    return (
+      <Suspense fallback={<Spinner className="min-h-screen items-center" />}>
+        <LicenseRequired me={me.data!} />
+      </Suspense>
+    );
+  }
   // A client opening a staff-only section (old link, typed URL) goes back to its home.
   if (!isStaffRole(me.data!.role) && !clientCanOpen(location.pathname)) return <Navigate to="/" replace />;
   return <Layout username={me.data!.username} role={me.data!.role} clientName={me.data!.client?.name} />;

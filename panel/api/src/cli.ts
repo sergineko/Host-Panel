@@ -85,7 +85,11 @@ try {
         console.log(`Licencia ${l.id} instalada (plan ${l.plan}).`);
       }
       const u = licenseUsage();
-      console.log(`Plan:     ${u.plan.name}${u.license ? ` · licencia ${u.license.id} (${u.license.email})` : ' · sin licencia'}`);
+      if (!u.plan) {
+        console.log('Sin licencia: el panel no se puede usar hasta instalar una (sudo hostpanel license <licencia>).');
+        break;
+      }
+      console.log(`Plan:     ${u.plan.name}${u.license ? ` · licencia ${u.license.id} (${u.license.email})` : ' · modo desarrollo'}`);
       console.log(`Accesos:  ${u.used}${u.max === null ? ` (${u.included} incluidos${u.extra ? `, ${u.extra} extra` : ''})` : ` de ${u.max}`}`);
       break;
     }

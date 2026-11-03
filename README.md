@@ -53,6 +53,7 @@ La primera vez que se abre el panel, un asistente obligatorio pide:
 
 | Paso | Qué pide | Por qué |
 |---|---|---|
+| 0. Licencia | Muestra los planes y la opción **«Ya tengo licencia»**, que pide pegarla | Todos los planes son de pago: sin licencia válida no se puede continuar |
 | 1. Cuenta | Usuario, email de contacto y contraseña | No se permiten nombres que prueban los bots (`admin`, `root`, `test`…). Contraseña de 12+ caracteres con 3 tipos de carácter, o frase de 16+; botón para generar una |
 | 2. Verificación en dos pasos | Escanear un QR y escribir el código | Recomendada (se puede omitir). Da 10 códigos de recuperación de un solo uso |
 | 3. Dominio principal | Dominio, email para Let's Encrypt y zona horaria | El servidor pasa a ser `ns1`/`ns2` (nameservers de todos tus dominios), `mail` y `panel` de ese dominio; su zona DNS se gestiona desde **Dominios → DNS** |
@@ -61,7 +62,7 @@ La primera vez que se abre el panel, un asistente obligatorio pide:
 El enlace evita que alguien que encuentre la IP antes que tú se quede con el panel.
 
 **Sin asistente** (instalación desatendida): `--domain` y `--email` dejan el dominio configurado y el asistente solo pide la
-cuenta y el 2FA.
+licencia, la cuenta y el 2FA. La licencia también se puede instalar antes desde la terminal: `sudo hostpanel license <licencia>`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash -s -- --domain midominio.com --email yo@midominio.com --yes
@@ -145,30 +146,64 @@ En **Administración → Clientes**:
 Cada usuario que puede entrar cuenta como un **acceso**: titular, equipo y clientes. Los desactivados y los de cuentas
 de cliente suspendidas no cuentan.
 
-| Plan | Accesos | Marca propia |
-|---|---|---|
-| Personal | 1 | No |
-| Profesional | Hasta 5 | No |
-| Empresa | Hasta 20 | No |
-| Reseller | 50 incluidos + un extra por cada acceso adicional | Sí: nombre, logo y color del panel, también en el acceso de los clientes |
+Todos los planes son **de pago** (suscripción). Sin una licencia válida el panel no se puede usar: el asistente de
+instalación la pide antes que nada y, si más adelante falta, el titular ve una pantalla para introducirla y el resto de
+usuarios un aviso. Las webs, el correo y el DNS **no** se ven afectados.
 
-- Sin licencia el panel funciona con el plan **Personal**.
+| Plan | Código | Accesos | Marca propia |
+|---|---|---|---|
+| Personal | `personal` | 1 (solo el titular) | No |
+| Profesional | `profesional` | Hasta 5 | No |
+| Empresa | `empresa` | Hasta 20 | No |
+| Reseller | `reseller` | 50 incluidos + un extra por cada acceso adicional | Sí: nombre, logo y color del panel, también en el acceso de los clientes |
+
 - Si hay más accesos que los del plan (por ejemplo al bajar de plan), los existentes siguen funcionando, pero no se
   pueden crear ni reactivar más.
-- La licencia la instala el titular en **Ajustes → Licencia** o con `sudo hostpanel license <licencia>`.
+- El titular instala o cambia la licencia en el asistente, en **Ajustes → Licencia** o con `sudo hostpanel license <licencia>`.
 - Las licencias van firmadas (Ed25519): el panel solo tiene la clave pública, así que no se pueden inventar ni modificar.
 
-### Emitir licencias (vendedor)
+### Generar licencias (vendedor)
 
-Hasta que exista el servidor de licencias, se emiten a mano con la clave privada, que **nunca** va en el repositorio:
+Hasta que exista el servidor de licencias, se generan a mano en tu ordenador con la **clave privada**, que nunca va en el
+repositorio (`*.pem` está en `.gitignore`).
+
+**1. Una sola vez: crear el par de claves**
 
 ```bash
-# Una sola vez: crea el par de claves (la pública va en panel/api/src/services/license.ts)
 node tools/license/keygen.mjs ~/.hostpanel-license
-
-# Por cada cliente: plan, email y, opcionalmente, fecha de fin del periodo pagado
-HP_LICENSE_KEY=~/.hostpanel-license/license-private.pem node tools/license/issue.mjs reseller cliente@empresa.com 2027-12-31
 ```
+
+Crea `license-private.pem` (secreta: haz copia de seguridad; quien la tenga puede emitir licencias) y
+`license-public.pem`, cuyo contenido va en `LICENSE_PUBLIC_KEY` de `panel/api/src/services/license.ts`. Si cambias la clave,
+las licencias emitidas con la anterior dejan de valer.
+
+**2. Por cada venta: generar la licencia del plan contratado**
+
+```bash
+export HP_LICENSE_KEY=~/.hostpanel-license/license-private.pem
+
+# Personal (1 acceso)
+node tools/license/issue.mjs personal cliente@empresa.com 2027-12-31
+
+# Profesional (hasta 5 accesos)
+node tools/license/issue.mjs profesional cliente@empresa.com 2027-12-31
+
+# Empresa (hasta 20 accesos)
+node tools/license/issue.mjs empresa cliente@empresa.com 2027-12-31
+
+# Reseller (50 incluidos + extras, marca propia)
+node tools/license/issue.mjs reseller cliente@empresa.com 2027-12-31
+```
+
+- El primer argumento es el código del plan; el segundo, el email del cliente; el tercero (opcional), el último día del
+  periodo pagado (`AAAA-MM-DD`).
+- El comando muestra en la terminal el identificador (`HP-…`) y escribe la licencia: un texto largo con un punto en medio.
+  Envíasela al cliente; la pegará en **«Ya tengo licencia»** al instalar.
+- Para cambiar de plan o renovar, genera una licencia nueva y el cliente la instala encima de la anterior.
+
+**Enlace para contratar**: si tienes tienda o página de precios, pon su dirección en `LICENSE_STORE_URL`
+(`panel/api/src/services/license.ts`). Cada plan mostrará un botón **Contratar** que abre `<dirección>?plan=<código>`.
+Mientras esté vacía, los planes indican que se contraten con el proveedor.
 
 ## Comandos
 

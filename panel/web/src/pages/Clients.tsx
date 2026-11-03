@@ -122,7 +122,7 @@ function AddUser({ role, clientId, onCreated }: { role: 'admin' | 'client'; clie
   if (full) {
     return (
       <div className="border-t border-border p-4">
-        <Callout tone="warn" title={`Has llegado al límite de tu plan ${lic.data!.plan.name}`}>
+        <Callout tone="warn" title={`Has llegado al límite de tu plan ${lic.data!.plan?.name ?? ""}`}>
           Tu plan incluye {lic.data!.max} {lic.data!.max === 1 ? 'acceso' : 'accesos'} (titular, equipo y clientes). Desactiva alguno o cambia de plan en Ajustes → Licencia.
         </Callout>
       </div>

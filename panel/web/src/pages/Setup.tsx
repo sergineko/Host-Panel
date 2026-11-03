@@ -1,19 +1,23 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Eye, EyeOff, Globe, KeyRound, ShieldCheck, Sparkles, UserRound, Wand2 } from 'lucide-react';
+import { BadgeCheck, Check, Eye, EyeOff, Globe, KeyRound, ShieldCheck, Sparkles, UserRound, Wand2 } from 'lucide-react';
 import { api, ApiError, type ServerIdentity } from '../lib/api';
 import { Logo } from '../components/Layout';
 import { generatePassword, passwordStrength, StrengthMeter, usernameHint } from '../components/AccountFields';
 import { TotpEnroll, AUTH_APPS } from '../components/TwoFactor';
 import { DomainConnection } from '../components/Connection';
 import { JobLog } from '../components/JobLog';
+import { LicenseChooser, type Plan } from '../components/LicenseCards';
 import { Button, Callout, Card, Copyable, ErrorBox, Field, Input, Select, Spinner, cx } from '../components/ui';
 
 interface SetupStatus {
   required: boolean;
   account: boolean;
   token_required: boolean;
+  license: boolean;
+  store_url: string;
+  plans: Plan[];
 }
 interface SetupState {
   pending: boolean;
@@ -28,6 +32,7 @@ interface SetupState {
 }
 
 const STEPS = [
+  { id: 'license', label: 'Licencia', icon: <BadgeCheck /> },
   { id: 'account', label: 'Cuenta', icon: <UserRound /> },
   { id: '2fa', label: 'Verificación', icon: <ShieldCheck /> },
   { id: 'domain', label: 'Dominio', icon: <Globe /> },
@@ -73,13 +78,13 @@ function Shell({ step, children, wide }: { step?: StepId; children: ReactNode; w
 
 // --- step 1: administrator account ---------------------------------------------------------
 
-function AccountStep({ token, onCreated }: { token: string; onCreated: () => void }) {
+function AccountStep({ token, defaultEmail = '', onCreated }: { token: string; defaultEmail?: string; onCreated: () => void }) {
   const verify = useQuery({
     queryKey: ['setup-verify', token],
     queryFn: () => api.post<{ ok: boolean; server_ip: string; admin_email: string }>('/api/setup/verify', { token }),
     retry: false,
   });
-  const [form, setForm] = useState({ username: '', email: '', password: '', confirm: '' });
+  const [form, setForm] = useState({ username: '', email: defaultEmail, password: '', confirm: '' });
   const [show, setShow] = useState(false);
   const [generated, setGenerated] = useState(false);
   const create = useMutation({
@@ -192,6 +197,35 @@ function AccountStep({ token, onCreated }: { token: string; onCreated: () => voi
           </Button>
         </div>
       </form>
+    </Card>
+  );
+}
+
+// --- step 0: licence ---------------------------------------------------------------------------
+
+function LicenseStep({ token, status, onDone }: { token: string; status: SetupStatus; onDone: (email: string) => void }) {
+  const verify = useQuery({
+    queryKey: ['setup-verify', token],
+    queryFn: () => api.post<{ ok: boolean }>('/api/setup/verify', { token }),
+    retry: false,
+  });
+  const install = useMutation({
+    mutationFn: (license: string) => api.post<{ plan: Plan; email: string; id: string }>('/api/setup/license', { token, license }),
+    onSuccess: (r) => onDone(r.email),
+  });
+
+  if (verify.isLoading) return <Spinner />;
+  if (verify.error) {
+    return (
+      <Callout tone="danger" title="No se puede usar este enlace">
+        {(verify.error as Error).message}
+        <pre className="mt-2 rounded-md bg-surface px-2.5 py-1.5 font-mono text-[12.5px]">sudo hostpanel setup-link</pre>
+      </Callout>
+    );
+  }
+  return (
+    <Card title="Licencia del panel" icon={<BadgeCheck />} description="Todos los planes son de suscripción.">
+      <LicenseChooser plans={status.plans} storeUrl={status.store_url} onActivate={(t) => install.mutate(t)} pending={install.isPending} error={install.error} />
     </Card>
   );
 }
@@ -397,6 +431,7 @@ export default function Setup() {
   const [params] = useSearchParams();
   const qc = useQueryClient();
   const token = params.get('token') ?? '';
+  const [licenseEmail, setLicenseEmail] = useState('');
   const status = useQuery({ queryKey: ['setup-status'], queryFn: () => api.get<SetupStatus>('/api/setup/status') });
   if (status.isLoading) return <Shell><Spinner /></Shell>;
   if (status.error) return <Shell><ErrorBox error={status.error} /></Shell>;
@@ -413,10 +448,25 @@ export default function Setup() {
       </Shell>
     );
   }
+  if (!st.license) {
+    return (
+      <Shell step="license">
+        <LicenseStep
+          token={token}
+          status={st}
+          onDone={async (email) => {
+            setLicenseEmail(email);
+            await qc.invalidateQueries({ queryKey: ['setup-status'] });
+          }}
+        />
+      </Shell>
+    );
+  }
   return (
     <Shell step="account">
       <AccountStep
         token={token}
+        defaultEmail={licenseEmail}
         onCreated={async () => {
           // Drop the token from the address bar and history.
           window.history.replaceState(null, '', '/setup');

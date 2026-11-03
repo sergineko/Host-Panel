@@ -50,6 +50,12 @@ acepta el aviso («Avanzado» → «Continuar»).
 
 El panel no te deja entrar hasta completar estos pasos:
 
+### Licencia
+
+Todos los planes son de pago. La pantalla muestra los planes disponibles (Personal, Profesional, Empresa y Reseller) para
+contratar uno. Si ya la tienes, pulsa **«Ya tengo licencia»** y pega la licencia que recibiste por email (un texto largo
+con un punto en medio).
+
 ### Cuenta de administrador
 
 - **Usuario**: elige un nombre poco evidente. No se permiten `admin`, `root`, `test` y similares porque son los
