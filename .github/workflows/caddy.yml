@@ -1,0 +1,52 @@
+# Builds Caddy with the modules HostPanel needs (Coraza WAF + rate limit) and publishes it as the
+# "caddy-waf" release. The installer downloads it from there: seconds, instead of waiting minutes
+# for caddyserver.com to compile it on demand (which often times out).
+name: Caddy con WAF
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1' # every Monday: picks up new Caddy and module releases
+  push:
+    branches: [main]
+    paths: ['.github/workflows/caddy.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+      - name: Build for amd64 and arm64
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 "$(go env GOPATH)/bin/xcaddy" build \
+              --output "dist/caddy-linux-$arch" \
+              --with github.com/corazawaf/coraza-caddy/v2 \
+              --with github.com/mholt/caddy-ratelimit
+          done
+          ./dist/caddy-linux-amd64 list-modules | grep -qx http.handlers.waf
+          ./dist/caddy-linux-amd64 list-modules | grep -qx http.handlers.rate_limit
+          (cd dist && sha256sum caddy-linux-* > SHA256SUMS)
+          echo "CADDY_VERSION=$(./dist/caddy-linux-amd64 version | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Publish release caddy-waf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete caddy-waf --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create caddy-waf dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Caddy $CADDY_VERSION con WAF y rate limit" \
+            --notes "Caddy $CADDY_VERSION compilado con xcaddy y los módulos coraza-caddy (WAF) y caddy-ratelimit, para Linux amd64 y arm64. Lo descarga el instalador de HostPanel. Se recompila cada semana." \
+            --latest=false

@@ -338,7 +338,7 @@ function DomainStep({ state, onDone, onBack }: { state: SetupState; onDone: () =
 
   if (jobId !== null) {
     return (
-      <Card title={`Configurando ${clean || state.identity.base_domain}`} icon={<Globe />} description="Se instala el correo, se abren sus puertos y se crea la zona DNS. Tarda unos minutos.">
+      <Card title={`Configurando ${clean || state.identity.base_domain}`} icon={<Globe />} description="Se instalan el DNS (PowerDNS), las bases de datos (MariaDB), PHP y el correo, y se crea la zona del dominio. Tarda unos minutos.">
         <JobLog
           jobId={jobId}
           onDone={(job) => {

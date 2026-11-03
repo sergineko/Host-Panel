@@ -83,12 +83,34 @@ update_panel() {
   HP_REEXEC=1 HP_KEEP_CODE=1 bash "$APP_DIR/install.sh" --yes
 }
 
+# Caddy with the WAF (Coraza) and rate limit modules. First from this repository's "caddy-waf"
+# release (built weekly by GitHub Actions, checked against SHA256SUMS): a download of seconds.
+# If it is missing, from caddyserver.com, which compiles it on demand and can take minutes.
+download_caddy() {
+  local dest=$1 slug base sum url attempt
+  slug=$(sed -E 's#^https://github\.com/##; s#\.git$##' <<<"${HP_REPO:-https://github.com/sergineko/Host-Panel.git}")
+  base="https://github.com/$slug/releases/download/caddy-waf"
+  rm -f "$dest"
+  if curl -fsSL --retry 3 --max-time 180 "$base/caddy-linux-$ARCH" -o "$dest" \
+    && sum=$(curl -fsSL --retry 3 --max-time 30 "$base/SHA256SUMS" | awk -v f="caddy-linux-$ARCH" '$2 == f {print $1}') \
+    && [[ -n $sum && $(sha256sum "$dest" | awk '{print $1}') == "$sum" ]]; then
+    chmod +x "$dest"
+    return 0
+  fi
+  rm -f "$dest"
+  echo "     Compilando Caddy en caddyserver.com (puede tardar varios minutos)…"
+  url="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
+  for attempt in 1 2; do
+    if curl -fsSL --max-time 420 "$url" -o "$dest"; then chmod +x "$dest"; return 0; fi
+    rm -f "$dest"
+  done
+  return 1
+}
+
 update_caddy() {
   say "Caddy + WAF"
-  local url="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
   echo "Antes: $(/usr/local/bin/caddy version 2>/dev/null | awk '{print $1}')"
-  curl -fsSL --retry 3 --max-time 300 "$url" -o /tmp/caddy.new
-  chmod +x /tmp/caddy.new
+  download_caddy /tmp/caddy.new || { echo "No se pudo descargar Caddy"; exit 1; }
   /tmp/caddy.new list-modules | grep -qx http.handlers.waf || { echo "El binario descargado no tiene el WAF"; exit 1; }
   install -m 0755 /tmp/caddy.new /usr/local/bin/caddy
   rm -f /tmp/caddy.new
@@ -107,7 +129,7 @@ update_stalwart() {
   [[ -x /opt/stalwart/bin/stalwart ]] || { echo "Stalwart no está instalado: se omite."; return 0; }
   say "Stalwart Mail"
   local current
-  current=$(/opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+  current=$(timeout 10 /opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
   if [[ $current == "${STALWART_VERSION#v}" ]]; then echo "Ya está en la versión compatible más reciente (${current})."; return 0; fi
   curl -fsSL --retry 3 --max-time 300 "https://github.com/stalwartlabs/stalwart/releases/download/${STALWART_VERSION}/stalwart-${STALWART_TRIPLE}.tar.gz" -o /tmp/stalwart.tgz
   rm -rf /tmp/stalwart.new && mkdir -p /tmp/stalwart.new

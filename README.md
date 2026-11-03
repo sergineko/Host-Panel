@@ -49,7 +49,8 @@ Servidor limpio con **Ubuntu 22.04 o posterior** (mejor una LTS: 24.04, 26.04…
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash
 ```
 
-El instalador no pregunta nada. Al terminar muestra un **enlace de un solo uso**
+El instalador no pregunta nada y solo prepara lo imprescindible para arrancar el panel (Node.js, Caddy y el panel). El resto
+se instala desde el asistente cuando ya conoce el dominio. Al terminar muestra un **enlace de un solo uso**
 (`https://IP:2087/setup?token=…`, caduca en 7 días; `sudo hostpanel setup-link` genera otro).
 
 ### Configuración inicial
@@ -61,7 +62,7 @@ La primera vez que se abre el panel, un asistente obligatorio pide:
 | 0. Licencia | Muestra los planes y la opción **«Ya tengo licencia»**, que pide pegarla | Todos los planes son de pago: sin licencia válida no se puede continuar |
 | 1. Cuenta | Usuario, email de contacto y contraseña | No se permiten nombres que prueban los bots (`admin`, `root`, `test`…). Contraseña de 12+ caracteres con 3 tipos de carácter, o frase de 16+; botón para generar una |
 | 2. Verificación en dos pasos | Escanear un QR y escribir el código | Recomendada (se puede omitir). Da 10 códigos de recuperación de un solo uso |
-| 3. Dominio principal | Dominio, email para Let's Encrypt y zona horaria | El servidor pasa a ser `ns1`/`ns2` (nameservers de todos tus dominios), `mail` y `panel` de ese dominio; su zona DNS se gestiona desde **Dominios → DNS** |
+| 3. Dominio principal | Dominio, email para Let's Encrypt y zona horaria | Instala entonces el DNS (PowerDNS), las bases de datos (MariaDB), PHP y el correo (Stalwart y Roundcube), con el progreso en el panel. El servidor pasa a ser `ns1`/`ns2`, `mail` y `panel` de ese dominio |
 | 4. DNS | Nada: muestra qué cambiar fuera | Glue records y nameservers en el registrador, PTR y puerto 25 en el proveedor del VPS, con comprobación en vivo |
 
 El enlace evita que alguien que encuentre la IP antes que tú se quede con el panel.

@@ -219,6 +219,30 @@ php2shell_fixed() {
   return 1
 }
 
+# Caddy with the WAF (Coraza) and rate limit modules. First from this repository's "caddy-waf"
+# release (built weekly by GitHub Actions, checked against SHA256SUMS): a download of seconds.
+# If it is missing, from caddyserver.com, which compiles it on demand and can take minutes.
+download_caddy() {
+  local dest=$1 slug base sum url attempt
+  slug=$(sed -E 's#^https://github\.com/##; s#\.git$##' <<<"${HP_REPO:-https://github.com/sergineko/Host-Panel.git}")
+  base="https://github.com/$slug/releases/download/caddy-waf"
+  rm -f "$dest"
+  if curl -fsSL --retry 3 --max-time 180 "$base/caddy-linux-$ARCH" -o "$dest" \
+    && sum=$(curl -fsSL --retry 3 --max-time 30 "$base/SHA256SUMS" | awk -v f="caddy-linux-$ARCH" '$2 == f {print $1}') \
+    && [[ -n $sum && $(sha256sum "$dest" | awk '{print $1}') == "$sum" ]]; then
+    chmod +x "$dest"
+    return 0
+  fi
+  rm -f "$dest"
+  echo "     Compilando Caddy en caddyserver.com (puede tardar varios minutos)…"
+  url="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
+  for attempt in 1 2; do
+    if curl -fsSL --max-time 420 "$url" -o "$dest"; then chmod +x "$dest"; return 0; fi
+    rm -f "$dest"
+  done
+  return 1
+}
+
 has_module() { local mods; mods=$(/usr/local/bin/caddy list-modules 2>/dev/null || true); grep -qx "$1" <<<"$mods"; }
 
 # --- arguments -----------------------------------------------------------------------
@@ -404,22 +428,6 @@ q systemctl enable fail2ban
 restart_if "$F2B_CHANGED" fail2ban || warn "fail2ban no arrancó"
 ok "Red optimizada (BBR) y fail2ban para SSH"
 
-# Free ports 25 and 53 from distro defaults.
-for svc in exim4 postfix sendmail; do
-  if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
-    q systemctl disable --now "$svc" || true
-    warn "$svc desactivado (Stalwart gestionará el correo)"
-  fi
-done
-if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-  mkdir -p /etc/systemd/resolved.conf.d
-  if printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1 9.9.9.9\n' | put_file /etc/systemd/resolved.conf.d/hostpanel.conf; then
-    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-    q systemctl restart systemd-resolved
-    ok "Puerto 53 liberado (systemd-resolved sin stub local)"
-  fi
-fi
-
 # =====================================================================================
 step "Código de HostPanel"
 if [[ ${HP_KEEP_CODE:-0} == 1 && -f $APP_DIR/panel/api/package.json ]]; then
@@ -449,6 +457,49 @@ if [[ $NODE_OK == 0 ]]; then
   apt_install nodejs
 fi
 ok "Node $(node -v)"
+
+# =====================================================================================
+step "Caddy con WAF (Coraza + OWASP CRS) y rate limit"
+id caddy >/dev/null 2>&1 || q useradd --system --home-dir /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+CADDY_CHANGED=0
+if [[ $UPDATE == 1 ]] || ! has_module http.handlers.waf || ! has_module http.handlers.rate_limit; then
+  download_caddy /tmp/caddy.new || die "No se pudo descargar Caddy con los módulos WAF."
+  /tmp/caddy.new list-modules 2>/dev/null | grep -qx http.handlers.waf || die "El Caddy descargado no incluye el módulo WAF"
+  install -m 0755 /tmp/caddy.new /usr/local/bin/caddy; rm -f /tmp/caddy.new
+  CADDY_CHANGED=1
+fi
+has_module http.handlers.waf || die "El binario de Caddy no incluye el módulo WAF"
+mkdir -p /etc/caddy "$LOG_DIR"
+put_file /etc/caddy/bootstrap.json <"$T/caddy-bootstrap.json" && CADDY_CHANGED=1
+chown caddy:caddy "$LOG_DIR"; chmod 0750 "$LOG_DIR"
+put_file /etc/systemd/system/caddy.service <"$T/systemd/caddy.service" && { CADDY_CHANGED=1; q systemctl daemon-reload; }
+q systemctl enable caddy
+restart_if "$CADDY_CHANGED" caddy
+ok "Caddy $(/usr/local/bin/caddy version | awk '{print $1}') con módulos waf y rate_limit"
+
+# =====================================================================================
+# Step 1 (this script) installs only what the panel needs to start. DNS, databases, PHP and mail
+# are installed from the first-run wizard once the main domain is known (it runs this installer
+# again with --domain), so nothing is set up with half the information. Servers that already
+# have them keep being managed here.
+if [[ -n $DOMAIN ]] || pkgs_installed pdns-server; then FULL=1; else FULL=0; fi
+if [[ $FULL == 1 ]]; then
+
+# Free ports 25 and 53 from distro defaults.
+for svc in exim4 postfix sendmail; do
+  if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+    q systemctl disable --now "$svc" || true
+    warn "$svc desactivado (Stalwart gestionará el correo)"
+  fi
+done
+if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+  mkdir -p /etc/systemd/resolved.conf.d
+  if printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1 9.9.9.9\n' | put_file /etc/systemd/resolved.conf.d/hostpanel.conf; then
+    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+    q systemctl restart systemd-resolved
+    ok "Puerto 53 liberado (systemd-resolved sin stub local)"
+  fi
+fi
 
 # =====================================================================================
 step "MariaDB"
@@ -557,42 +608,19 @@ restart_if "$PDNS_CHANGED" pdns || die "PowerDNS no arrancó. ¿Está ocupado el
 ok "PowerDNS escuchando en el puerto 53"
 
 # =====================================================================================
-step "Caddy con WAF (Coraza + OWASP CRS) y rate limit"
-id caddy >/dev/null 2>&1 || q useradd --system --home-dir /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
-CADDY_CHANGED=0
-if [[ $UPDATE == 1 ]] || ! has_module http.handlers.waf || ! has_module http.handlers.rate_limit; then
-  CADDY_URL="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
-  rm -f /tmp/caddy.new
-  for attempt in 1 2 3; do
-    if curl -fsSL --max-time 300 "$CADDY_URL" -o /tmp/caddy.new; then break; fi
-    warn "Descarga de Caddy fallida (intento $attempt), reintentando…"; sleep 5
-  done
-  [[ -s /tmp/caddy.new ]] || die "No se pudo descargar Caddy con los módulos WAF."
-  install -m 0755 /tmp/caddy.new /usr/local/bin/caddy; rm -f /tmp/caddy.new
-  CADDY_CHANGED=1
-fi
-has_module http.handlers.waf || die "El binario de Caddy no incluye el módulo WAF"
-mkdir -p /etc/caddy "$LOG_DIR"
-put_file /etc/caddy/bootstrap.json <"$T/caddy-bootstrap.json" && CADDY_CHANGED=1
-chown caddy:caddy "$LOG_DIR"; chmod 0750 "$LOG_DIR"
-put_file /etc/systemd/system/caddy.service <"$T/systemd/caddy.service" && { CADDY_CHANGED=1; q systemctl daemon-reload; }
-q systemctl enable caddy
-restart_if "$CADDY_CHANGED" caddy
-ok "Caddy $(/usr/local/bin/caddy version | awk '{print $1}') con módulos waf y rate_limit"
-
-# =====================================================================================
 if [[ -n $MAIL_HOSTNAME ]]; then
   step "Servidor de correo (Stalwart)"
   id stalwart >/dev/null 2>&1 || q useradd --system --user-group --home-dir /opt/stalwart --shell /usr/sbin/nologin stalwart
   mkdir -p /opt/stalwart/{bin,etc/certs,data,logs}
   MAIL_CHANGED=0
-  STALWART_INSTALLED=$(/opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
-  if [[ -n $STALWART_INSTALLED && $STALWART_INSTALLED != 0.16.* ]]; then
-    warn "Stalwart $STALWART_INSTALLED no es compatible con el panel: se instala ${STALWART_VERSION#v}"
+  STALWART_INSTALLED=$(timeout 10 /opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+  # An installed binary that isn't 0.16 (or doesn't even report its version) is replaced.
+  if [[ -x /opt/stalwart/bin/stalwart && $STALWART_INSTALLED != 0.16.* ]]; then
+    warn "Stalwart ${STALWART_INSTALLED:-de versión desconocida} no es compatible con el panel: se instala ${STALWART_VERSION#v}"
     q systemctl stop stalwart || true
     # A 1.x data folder can't be read by 0.16: keep it aside, never delete it.
     if [[ -d /opt/stalwart/data && -n $(ls -A /opt/stalwart/data 2>/dev/null) ]]; then
-      mv /opt/stalwart/data "/opt/stalwart/data.v$STALWART_INSTALLED-$(date +%Y%m%d%H%M%S)"
+      mv /opt/stalwart/data "/opt/stalwart/data.v${STALWART_INSTALLED:-desconocida}-$(date +%Y%m%d%H%M%S)"
       mkdir -p /opt/stalwart/data
     fi
   fi
@@ -649,8 +677,10 @@ if [[ -n $MAIL_HOSTNAME ]]; then
     ok "Webmail preparado en https://$MAIL_HOSTNAME"
   fi
 else
-  warn "Sin dominio principal: se omite el correo. Reinstala con --domain para activarlo."
+  warn "Sin dominio principal: el correo se instala al elegirlo en el panel (Ajustes)."
 fi
+
+fi # FULL
 
 # =====================================================================================
 step "Panel de control"
@@ -675,7 +705,7 @@ HP_SECRET=$SECRET
 HP_PDNS_KEY=$PDNS_KEY
 HP_STALWART_PASSWORD=$STALWART_PASSWORD
 HP_ROUNDCUBE_KEY=$ROUNDCUBE_KEY
-HP_PHP_VERSION=$PHP_VERSION
+${PHP_VERSION:+HP_PHP_VERSION=$PHP_VERSION}
 HP_DATA_DIR=$DATA_DIR
 HP_SITES_DIR=$SITES_DIR
 HP_STORAGE_DIR=$STORAGE_DIR
@@ -723,10 +753,12 @@ step "Cortafuegos y mantenimiento"
 SSH_PORT=$(ss -tlnp 2>/dev/null | awk '/sshd/ {n=split($4,a,":"); print a[n]; exit}' || true)
 SSH_PORT=${SSH_PORT:-22}
 q ufw allow "$SSH_PORT/tcp" comment 'SSH'
-for rule in 80/tcp 443/tcp 443/udp 2087/tcp 53/tcp 53/udp; do q ufw allow "$rule"; done
+for rule in 80/tcp 443/tcp 443/udp 2087/tcp; do q ufw allow "$rule"; done
+if [[ $FULL == 1 ]]; then q ufw allow 53/tcp; q ufw allow 53/udp; fi
 if [[ -n $MAIL_HOSTNAME ]]; then for rule in 25/tcp 465/tcp 587/tcp 993/tcp 4190/tcp; do q ufw allow "$rule"; done; fi
 q ufw --force enable
-ok "UFW: SSH ($SSH_PORT), web 80/443, panel 2087, DNS 53${MAIL_HOSTNAME:+, correo 25/465/587/993}"
+DNS_MSG=''; [[ $FULL == 1 ]] && DNS_MSG=', DNS 53'
+ok "UFW: SSH ($SSH_PORT), web 80/443, panel 2087${DNS_MSG}${MAIL_HOSTNAME:+, correo 25/465/587/993}"
 apt_install unattended-upgrades || true
 ok "Actualizaciones de seguridad automáticas"
 
@@ -762,7 +794,8 @@ EOF
   El panel te pedirá:
     · tu cuenta de administrador (usuario poco evidente y contraseña segura)
     · la verificación en dos pasos (Contraseñas de Apple, Microsoft Authenticator…)
-    · el dominio principal del servidor y la zona horaria
+    · el dominio principal del servidor y la zona horaria; con ellos instala el DNS, las bases
+      de datos, PHP y el correo, mostrando el progreso en el propio panel
   y te dirá qué cambiar en el registrador del dominio (glue records y nameservers).
 
   ${Y}El enlace es personal y de un solo uso (caduca en 7 días).${N}

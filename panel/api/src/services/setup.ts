@@ -138,7 +138,10 @@ export async function configureMainDomain(name: string, email: string, user: str
   if (row && !row.dns_enabled) {
     throw new HttpError(400, `${name} ya está añadido con el DNS en otro proveedor. Actívale el DNS del panel o elige otro dominio.`);
   }
-  if (!row) {
+  // On a fresh server PowerDNS isn't installed yet: the installer run below installs it (with the
+  // databases, PHP and mail) and then adds the domain and its zone itself (bootstrap-domain).
+  const dnsInstalled = config.dev || existsSync('/usr/sbin/pdns_server');
+  if (!row && dnsInstalled) {
     const zones = await dns.listZones();
     if (!zones.includes(name)) await dns.createZone(name, dns.defaultZoneRecords(name));
     row = { id: run('INSERT INTO domains (name, dns_enabled) VALUES (?, 1)', name).id, dns_enabled: 1 };

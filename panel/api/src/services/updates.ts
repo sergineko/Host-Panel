@@ -118,7 +118,7 @@ async function currentVersions(): Promise<Record<(typeof COMPONENTS)[number], st
     return { panel: 'dev', caddy: '2.10.0', stalwart: '0.13.1', roundcube: '1.6.11', node: process.versions.node, system: '0' };
   }
   const caddy = firstVersion((await tryExec('/usr/local/bin/caddy', ['version'])).output);
-  const stalwart = firstVersion((await tryExec('/opt/stalwart/bin/stalwart', ['--version'])).output);
+  const stalwart = firstVersion((await tryExec('/opt/stalwart/bin/stalwart', ['--version'], { timeoutMs: 10_000 })).output);
   let roundcube = '';
   try {
     roundcube = /RCMAIL_VERSION',\s*'([^']+)'/.exec(readFileSync(join(config.roundcubeDir, 'program/include/iniset.php'), 'utf8'))?.[1] ?? '';
