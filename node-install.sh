@@ -63,6 +63,23 @@ php2shell_fixed() {
   return 1
 }
 
+# A package apt can install (not just a name other packages mention). English output to parse it.
+pkg_available() {
+  local c
+  c=$(LC_ALL=C apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+  [[ -n $c && $c != "(none)" ]]
+}
+
+# PHP packages that exist for a version. Each release differs: since PHP 8.5 OPcache is built in
+# (no phpX.Y-opcache package) and some builds include readline or other modules in -cli.
+php_packages() {
+  local v=$1 ext
+  shift
+  for ext in "$@"; do
+    if pkg_available "php$v-$ext"; then printf 'php%s-%s\n' "$v" "$ext"; fi
+  done
+}
+
 # --- operating system ----------------------------------------------------------------
 # Any Ubuntu from 22.04 or Debian from 12, newer releases included. Sets CODENAME.
 check_os() {
@@ -101,7 +118,7 @@ setup_php_repo() {
   PHP_REPO=0
   if [[ $ID == ubuntu ]]; then
     apt_install software-properties-common
-    if q add-apt-repository -y ppa:ondrej/php && q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+    if q add-apt-repository -y ppa:ondrej/php && q apt-get update && pkg_available "php${PHP_VERSION}-fpm"; then
       PHP_REPO=1
     else
       q add-apt-repository -y -r ppa:ondrej/php || true
@@ -111,14 +128,14 @@ setup_php_repo() {
     if curl -fsS -o /dev/null --max-time 15 "https://packages.sury.org/php/dists/$CODENAME/Release" \
       && curl -fsSL --max-time 30 https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg; then
       echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $CODENAME main" >/etc/apt/sources.list.d/sury-php.list
-      if q apt-get update && apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then PHP_REPO=1; fi
+      if q apt-get update && pkg_available "php${PHP_VERSION}-fpm"; then PHP_REPO=1; fi
     fi
     [[ $PHP_REPO == 1 ]] || rm -f /etc/apt/sources.list.d/sury-php.list
   fi
   q apt-get update
-  if [[ $PHP_REPO == 0 ]] && ! apt-cache show "php${PHP_VERSION}-fpm" >/dev/null 2>&1; then
+  if [[ $PHP_REPO == 0 ]] && ! pkg_available "php${PHP_VERSION}-fpm"; then
     local distro
-    distro=$(apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+    distro=$(LC_ALL=C apt-cache depends php-fpm 2>/dev/null | grep -oE 'php[0-9]+\.[0-9]+-fpm' | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
     [[ -n $distro ]] || die "No hay paquetes de PHP disponibles para $PRETTY_NAME."
     warn "El repositorio de PHP no publica paquetes para $PRETTY_NAME: se usa PHP $distro de la distribución."
     PHP_VERSION=$distro
@@ -171,9 +188,9 @@ setup_php_repo
 if [[ $PHP_VERSION != "$REQUESTED_PHP" ]]; then
   warn "Este nodo tendrá PHP $PHP_VERSION en lugar de $REQUESTED_PHP: los sitios que pidan otra versión no podrán desplegarse aquí."
 fi
-apt_install "php${PHP_VERSION}-fpm" "php${PHP_VERSION}-cli" "php${PHP_VERSION}-mysql" "php${PHP_VERSION}-sqlite3" "php${PHP_VERSION}-gd" \
-  "php${PHP_VERSION}-intl" "php${PHP_VERSION}-mbstring" "php${PHP_VERSION}-xml" "php${PHP_VERSION}-zip" "php${PHP_VERSION}-curl" \
-  "php${PHP_VERSION}-bcmath" "php${PHP_VERSION}-opcache"
+pkg_available "php${PHP_VERSION}-fpm" && pkg_available "php${PHP_VERSION}-cli" || die "No hay paquetes de PHP $PHP_VERSION (fpm y cli) para $PRETTY_NAME."
+mapfile -t PHP_PKGS < <(php_packages "$PHP_VERSION" fpm cli mysql sqlite3 gd intl mbstring xml zip curl bcmath opcache)
+apt_install "${PHP_PKGS[@]}"
 php2shell_fixed "$PHP_VERSION" || die "$PHP2SHELL_DETAIL no tiene corregida la vulnerabilidad PHP2Shell (CVE-2026-109618 y CVE-2026-109619). Usa un sistema con paquetes de PHP actualizados."
 ok "$PHP2SHELL_DETAIL: PHP2Shell corregido"
 for sapi in fpm cli; do

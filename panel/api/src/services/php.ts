@@ -56,12 +56,27 @@ export function phpUsage(): Record<string, number> {
   return usage;
 }
 
-/** Packages to install for a version (optional ones only if the repo has them). */
+/** apt output in English, so it can be parsed whatever the server's language. */
+const APT_PARSE_ENV = { LC_ALL: 'C', LANG: 'C' };
+
+/** Installable version of a package ("" if none: unknown or only mentioned by other packages). */
+async function aptCandidate(pkg: string) {
+  const r = await tryExec('apt-cache', ['policy', pkg], { env: APT_PARSE_ENV });
+  const m = /Candidate:\s*(\S+)/.exec(r.output);
+  return m && m[1] !== '(none)' ? m[1] : '';
+}
+
+/**
+ * Packages to install for a version: only those that exist. Releases differ (since PHP 8.5 OPcache
+ * is built in, so there is no phpX.Y-opcache), and fpm and cli are the only ones required.
+ */
 async function packagesFor(v: string) {
-  const pkgs = PHP_EXTENSIONS.map((e) => `php${v}-${e}`);
-  for (const e of OPTIONAL_EXTENSIONS) {
-    const r = await tryExec('apt-cache', ['show', `php${v}-${e}`]);
-    if (r.ok && r.output.trim()) pkgs.push(`php${v}-${e}`);
+  const pkgs: string[] = [];
+  for (const e of [...PHP_EXTENSIONS, ...OPTIONAL_EXTENSIONS]) {
+    if (await aptCandidate(`php${v}-${e}`)) pkgs.push(`php${v}-${e}`);
+  }
+  for (const required of ['fpm', 'cli']) {
+    if (!pkgs.includes(`php${v}-${required}`)) throw new Error(`No hay paquete php${v}-${required} para este sistema`);
   }
   return pkgs;
 }
@@ -108,9 +123,8 @@ export async function ensurePhpHardening() {
 
 /** Upstream version apt would install, e.g. "1:8.4.27-1+ubuntu24.04.1+deb.sury.org+1" → "8.4.27". */
 async function candidateVersion(v: string) {
-  const r = await tryExec('apt-cache', ['policy', `php${v}-fpm`]);
-  const m = /Candidate:\s*(?:\d+:)?([0-9.]+)/.exec(r.output);
-  return m?.[1] ?? '';
+  const c = await aptCandidate(`php${v}-fpm`);
+  return /^(?:\d+:)?([0-9.]+)/.exec(c)?.[1] ?? '';
 }
 
 /** Refuses (and removes) a build without the PHP2Shell fix. */

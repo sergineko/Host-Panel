@@ -85,7 +85,7 @@ async function phpVersions(): Promise<ComponentStatus[]> {
       current = `${v}.10`;
       latest = `${v}.12`;
     } else {
-      const policy = await tryExec('apt-cache', ['policy', `php${v}-fpm`], { env: { LANG: 'C' } });
+      const policy = await tryExec('apt-cache', ['policy', `php${v}-fpm`], { env: { LC_ALL: 'C', LANG: 'C' } });
       current = firstVersion(/Installed:\s*(\S+)/.exec(policy.output)?.[1] ?? '');
       latest = firstVersion(/Candidate:\s*(\S+)/.exec(policy.output)?.[1] ?? '');
       if (!current) current = (await tryExec(`/usr/bin/php${v}`, ['-r', 'echo PHP_VERSION;'])).output.trim();
