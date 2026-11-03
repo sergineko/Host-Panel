@@ -73,6 +73,13 @@ licencia, la cuenta y el 2FA. La licencia también se puede instalar antes desde
 curl -fsSL https://raw.githubusercontent.com/sergineko/Host-Panel/main/install.sh | sudo bash -s -- --domain midominio.com --email yo@midominio.com --yes
 ```
 
+### Actualizar
+
+Desde el panel (**Sistema → Actualizaciones**), con `sudo hostpanel update` o volviendo a ejecutar el comando de
+instalación: los tres hacen lo mismo. El instalador detecta que ya hay una instalación, descarga la última versión y solo
+cambia lo necesario: no reinstala paquetes que ya están, no recompila la interfaz si el código no cambió y no reinicia
+MariaDB, PHP, PowerDNS, Caddy ni el correo si su configuración es la misma (las webs no se cortan).
+
 ## Desinstalar
 
 ```bash

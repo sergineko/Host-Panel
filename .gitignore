@@ -9,3 +9,5 @@ dist/
 
 # Licence signing keys must never be committed
 *.pem
+# Marker of the last panel build (installer)
+.hp-build

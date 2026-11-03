@@ -61,8 +61,34 @@ trap 'die "Error en la línea $LINENO: $BASH_COMMAND"' ERR
 # Runs a command quietly, appending its output to the install log.
 q() { "$@" >>"$INSTALL_LOG" 2>&1; }
 apt_install() {
-  DEBIAN_FRONTEND=noninteractive q apt-get install -y --no-install-recommends \
-    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+  local opts=(-y --no-install-recommends -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+  DEBIAN_FRONTEND=noninteractive q apt-get install "${opts[@]}" "$@" && return 0
+  # Package lists may be old (updates skip "apt-get update" when nothing is missing): refresh, retry.
+  apt_update || true
+  DEBIAN_FRONTEND=noninteractive q apt-get install "${opts[@]}" "$@"
+}
+
+# All the given packages are installed.
+pkgs_installed() {
+  local p
+  for p in "$@"; do dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'ok installed' || return 1; done
+}
+
+# put_file <destination> [mode] < content: writes only when the content changed.
+# Returns 0 when the file was written, 1 when it was already up to date (use it in if/&&).
+put_file() {
+  local tmp
+  tmp=$(mktemp)
+  cat >"$tmp"
+  if [[ -f $1 ]] && cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 1; fi
+  install -m "${2:-0644}" "$tmp" "$1"
+  rm -f "$tmp"
+}
+
+# restart_if <changed 0|1> <service>: restarts only when its configuration changed (or it is
+# stopped), so re-running the installer doesn't interrupt websites, DNS or mail for nothing.
+restart_if() {
+  if [[ $1 == 1 ]] || ! systemctl is-active --quiet "$2"; then q systemctl restart "$2"; fi
 }
 
 # ask "Pregunta" "por defecto" — reads from the terminal even when the script is piped.
@@ -82,7 +108,8 @@ render() {
   local content key
   content=$(<"$1")
   for key in "${!TPL[@]}"; do content=${content//"{{$key}}"/"${TPL[$key]}"}; done
-  printf '%s\n' "$content" >"$2"
+  printf '%s
+' "$content" | put_file "$2" "${3:-0644}"
 }
 
 # A package apt can install (not just a name other packages mention). English output to parse it.
@@ -207,15 +234,44 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-printf '\n%s%s  HostPanel%s — instalación nativa (sin Docker)\n' "$O" "$B" "$N"
+if [[ $EUID -ne 0 ]]; then echo "Ejecuta el instalador como root (sudo)." >&2; exit 1; fi
+# Systemd units (updates from the panel) run without HOME, and npm needs it.
+export HOME=${HOME:-/root}
+mkdir -p "$(dirname "$INSTALL_LOG")"
+# A fresh log, except when continuing with the downloaded installer (see below).
+if [[ ${HP_REEXEC:-0} != 1 ]]; then : >"$INSTALL_LOG"; fi
+apt_wait_setup
+
+# --- code first ----------------------------------------------------------------------
+# The script piped from GitHub can be a cached copy a few minutes old. Download (or update) the
+# code before anything else and continue with the installer that comes with it: every step runs
+# once and always matches the code. A local copy of the repository is installed as it is.
+SELF=$(readlink -f "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || echo /dev/null)
+if [[ ${HP_REEXEC:-0} != 1 && ${HP_KEEP_CODE:-0} != 1 ]] \
+  && ! [[ $SELF != "$APP_DIR/install.sh" && -f $(dirname "$SELF")/panel/api/package.json ]]; then
+  printf '\n%s%s  HostPanel%s — descargando la última versión…\n' "$O" "$B" "$N"
+  if ! command -v git >/dev/null; then apt_update || true; apt_install git ca-certificates || die "No se pudo instalar git"; fi
+  mkdir -p "$APP_DIR"
+  if [[ ! -d $APP_DIR/.git ]]; then
+    # Fresh install, or code copied without git: turn the folder into a checkout in place.
+    q git -C "$APP_DIR" init -q
+    q git -C "$APP_DIR" remote add origin "$HP_REPO" || q git -C "$APP_DIR" remote set-url origin "$HP_REPO"
+  fi
+  q git -C "$APP_DIR" fetch --depth 1 origin "$HP_BRANCH" && q git -C "$APP_DIR" reset --hard FETCH_HEAD \
+    || die "No se pudo descargar el código de $HP_REPO"
+  trap - ERR
+  exec env HP_REEXEC=1 HP_KEEP_CODE=1 HP_BRANCH="$HP_BRANCH" HP_REPO="$HP_REPO" bash "$APP_DIR/install.sh" "${ORIG_ARGS[@]}"
+fi
+
+if [[ -f $ENV_FILE ]]; then EXISTING=1; else EXISTING=0; fi
+if [[ $EXISTING == 1 ]]; then
+  printf '\n%s%s  HostPanel%s — actualización (solo se cambia lo necesario)\n' "$O" "$B" "$N"
+else
+  printf '\n%s%s  HostPanel%s — instalación nativa (sin Docker)\n' "$O" "$B" "$N"
+fi
 
 # =====================================================================================
 step "Comprobando el sistema"
-if [[ $EUID -ne 0 ]]; then echo "Ejecuta el instalador como root (sudo)." >&2; exit 1; fi
-mkdir -p "$(dirname "$INSTALL_LOG")"
-apt_wait_setup
-# A fresh log, except when continuing with the downloaded installer (see "Código de HostPanel").
-if [[ ${HP_REEXEC:-0} != 1 ]]; then : >"$INSTALL_LOG"; fi
 check_os
 case "$(uname -m)" in
   x86_64) ARCH=amd64; STALWART_TRIPLE=x86_64-unknown-linux-gnu ;;
@@ -300,16 +356,21 @@ step "Paquetes base"
 export DEBIAN_FRONTEND=noninteractive
 # Third-party PHP repositories from older installers are no longer used (they break on new releases).
 rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php* /etc/apt/sources.list.d/sury-php.list /usr/share/keyrings/sury-php.gpg
-if ! apt_update; then
-  warn "Algún repositorio de apt da error; se continúa con los demás:"
-  grep -E '^(E|Err):' "$INSTALL_LOG" | tail -n 2 | sed 's/^/       /' || true
+BASE_PKGS=(ca-certificates curl gnupg git acl ufw openssl sqlite3 unzip tar rsync jq cron logrotate iproute2 procps
+  openssh-client fail2ban python3-systemd)
+if pkgs_installed "${BASE_PKGS[@]}"; then
+  ok "Paquetes base ya instalados"
+else
+  if ! apt_update; then
+    warn "Algún repositorio de apt da error; se continúa con los demás:"
+    grep -E '^(E|Err):' "$INSTALL_LOG" | tail -n 2 | sed 's/^/       /' || true
+  fi
+  apt_install "${BASE_PKGS[@]}"
+  ok "Paquetes base instalados"
 fi
-apt_install ca-certificates curl gnupg git acl ufw openssl sqlite3 unzip tar rsync jq cron logrotate iproute2 procps \
-  openssh-client fail2ban python3-systemd
-ok "Paquetes base instalados"
 
 # Network performance: BBR congestion control, bigger queues, TCP Fast Open.
-cat >/etc/sysctl.d/90-hostpanel.conf <<'EOF'
+if put_file /etc/sysctl.d/90-hostpanel.conf <<'EOF'
 # Generated by HostPanel.
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -321,11 +382,14 @@ net.ipv4.ip_local_port_range = 10240 65000
 fs.file-max = 2097152
 vm.swappiness = 10
 EOF
-q sysctl --system || warn "No se pudieron aplicar todos los ajustes de red (normal en algunos contenedores)"
+then
+  q sysctl --system || warn "No se pudieron aplicar todos los ajustes de red (normal en algunos contenedores)"
+fi
 
 # Brute-force protection for SSH.
 mkdir -p /etc/fail2ban/jail.d
-cat >/etc/fail2ban/jail.d/hostpanel.conf <<'EOF'
+F2B_CHANGED=0
+put_file /etc/fail2ban/jail.d/hostpanel.conf <<'EOF' && F2B_CHANGED=1
 # Generated by HostPanel.
 [DEFAULT]
 bantime = 1h
@@ -337,7 +401,7 @@ backend = systemd
 enabled = true
 EOF
 q systemctl enable fail2ban
-q systemctl restart fail2ban || warn "fail2ban no arrancó"
+restart_if "$F2B_CHANGED" fail2ban || warn "fail2ban no arrancó"
 ok "Red optimizada (BBR) y fail2ban para SSH"
 
 # Free ports 25 and 53 from distro defaults.
@@ -349,16 +413,17 @@ for svc in exim4 postfix sendmail; do
 done
 if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
   mkdir -p /etc/systemd/resolved.conf.d
-  printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1 9.9.9.9\n' >/etc/systemd/resolved.conf.d/hostpanel.conf
-  ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-  q systemctl restart systemd-resolved
-  ok "Puerto 53 liberado (systemd-resolved sin stub local)"
+  if printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1 9.9.9.9\n' | put_file /etc/systemd/resolved.conf.d/hostpanel.conf; then
+    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+    q systemctl restart systemd-resolved
+    ok "Puerto 53 liberado (systemd-resolved sin stub local)"
+  fi
 fi
 
 # =====================================================================================
 step "Código de HostPanel"
 if [[ ${HP_KEEP_CODE:-0} == 1 && -f $APP_DIR/panel/api/package.json ]]; then
-  ok "Se mantiene el código instalado"
+  ok "Versión $(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo local)"
 elif [[ -f $SCRIPT_DIR/panel/api/package.json && $SCRIPT_DIR != "$APP_DIR" ]]; then
   mkdir -p "$APP_DIR"
   rsync -a --delete --exclude node_modules --exclude dist --exclude .git "$SCRIPT_DIR/" "$APP_DIR/"
@@ -370,14 +435,6 @@ elif [[ -d $APP_DIR/.git ]]; then
 elif [[ ! -f $APP_DIR/panel/api/package.json ]]; then
   q git clone --depth 1 --branch "$HP_BRANCH" "$HP_REPO" "$APP_DIR" || die "No se pudo descargar $HP_REPO"
   ok "Descargado de $HP_REPO"
-fi
-# raw.githubusercontent.com can serve a copy of this script a few minutes old while git already
-# brought the latest code: continue with the installer that ships with the downloaded code, so
-# both always match. Steps 1-2 run again (they are quick and idempotent).
-if [[ ${HP_REEXEC:-0} != 1 && -f $APP_DIR/install.sh ]]   && [[ $(readlink -f "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true) != "$(readlink -f "$APP_DIR/install.sh")" ]]; then
-  ok "Se continúa con el instalador de la versión descargada"
-  trap - ERR
-  exec env HP_REEXEC=1 HP_KEEP_CODE=1 bash "$APP_DIR/install.sh" "${ORIG_ARGS[@]}"
 fi
 T=$APP_DIR/templates
 
@@ -401,7 +458,8 @@ q systemctl enable --now mariadb
 q mariadb -e "DELETE FROM mysql.global_priv WHERE User=''; DROP DATABASE IF EXISTS test; FLUSH PRIVILEGES;" || true
 # Buffer pool sized to ~25 % of RAM (min 128 MB); the rest is for PHP, Node and the mail server.
 BUFFER_MB=$(( MEM_MB / 4 )); (( BUFFER_MB < 128 )) && BUFFER_MB=128
-cat >/etc/mysql/mariadb.conf.d/90-hostpanel.cnf <<EOF
+DB_CHANGED=0
+put_file /etc/mysql/mariadb.conf.d/90-hostpanel.cnf <<EOF && DB_CHANGED=1
 # Generated by HostPanel.
 [mysqld]
 innodb_buffer_pool_size = ${BUFFER_MB}M
@@ -416,7 +474,7 @@ skip_name_resolve = ON
 character_set_server = utf8mb4
 collation_server = utf8mb4_unicode_ci
 EOF
-q systemctl restart mariadb
+restart_if "$DB_CHANGED" mariadb
 ok "MariaDB $(mariadb --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
 
 # =====================================================================================
@@ -428,8 +486,8 @@ mapfile -t PHP_PKGS < <(php_packages "$PHP_VERSION" fpm cli mysql sqlite3 gd int
 apt_install "${PHP_PKGS[@]}"
 if ! php2shell_fixed "$PHP_VERSION"; then
   die "$PHP2SHELL_DETAIL no tiene corregida la vulnerabilidad PHP2Shell (CVE-2026-109618 y CVE-2026-109619). \
-Los paquetes de PHP disponibles para $PRETTY_NAME aún no incluyen el parche: espera a que tu distribución lo publique \
-o usa una versión con el repositorio de Ondřej Surý (Ubuntu LTS o Debian estable)."
+Los paquetes de PHP de los repositorios oficiales de $PRETTY_NAME aún no incluyen el parche: espera a que tu \
+distribución publique la actualización y vuelve a ejecutar el instalador."
 fi
 ok "$PHP2SHELL_DETAIL: PHP2Shell corregido"
 for opt in $(php_packages "$PHP_VERSION" imagick redis apcu); do apt_install "$opt" || true; done
@@ -444,8 +502,9 @@ if [[ ! -x /usr/local/bin/wp || $UPDATE == 1 ]]; then
   fi
   rm -f /tmp/wp-cli.phar
 fi
+PHP_CHANGED=0
 for sapi in fpm cli; do
-  cat >"/etc/php/$PHP_VERSION/$sapi/conf.d/99-hostpanel.ini" <<'EOF'
+  put_file "/etc/php/$PHP_VERSION/$sapi/conf.d/99-hostpanel.ini" <<'EOF' && PHP_CHANGED=1
 ; Generated by HostPanel.
 opcache.enable=1
 opcache.memory_consumption=192
@@ -460,24 +519,28 @@ expose_php=Off
 session.upload_progress.enabled=0
 EOF
 done
-rm -f "/etc/php/$PHP_VERSION/fpm/pool.d/www.conf"
+if [[ -f /etc/php/$PHP_VERSION/fpm/pool.d/www.conf ]]; then rm -f "/etc/php/$PHP_VERSION/fpm/pool.d/www.conf"; PHP_CHANGED=1; fi
 printf '; Generated by HostPanel: keeps FPM running when no site uses this version.\n[hp-idle]\nuser = nobody\ngroup = nogroup\nlisten = /run/php/hp-idle-%s.sock\npm = ondemand\npm.max_children = 1\n' "$PHP_VERSION" \
-  >"/etc/php/$PHP_VERSION/fpm/pool.d/hp-idle.conf"
-q systemctl enable --now "php${PHP_VERSION}-fpm"
-q systemctl restart "php${PHP_VERSION}-fpm"
+  | put_file "/etc/php/$PHP_VERSION/fpm/pool.d/hp-idle.conf" && PHP_CHANGED=1
+q systemctl enable "php${PHP_VERSION}-fpm"
+restart_if "$PHP_CHANGED" "php${PHP_VERSION}-fpm"
 ok "PHP $PHP_VERSION de los repositorios oficiales de $PRETTY_NAME"
 
 # =====================================================================================
 step "PowerDNS (DNS autoritativo)"
-# Don't let the package start pdns with its default bind backend: we configure it first.
-printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
-apt_install pdns-server pdns-backend-sqlite3 || { rm -f /usr/sbin/policy-rc.d; die "No se pudo instalar PowerDNS"; }
-rm -f /usr/sbin/policy-rc.d
-q systemctl stop pdns || true
-rm -f /etc/powerdns/pdns.d/bind.conf
+PDNS_CHANGED=0
+if ! pkgs_installed pdns-server pdns-backend-sqlite3; then
+  # Don't let the package start pdns with its default bind backend: we configure it first.
+  printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
+  apt_install pdns-server pdns-backend-sqlite3 || { rm -f /usr/sbin/policy-rc.d; die "No se pudo instalar PowerDNS"; }
+  rm -f /usr/sbin/policy-rc.d
+  q systemctl stop pdns || true
+  PDNS_CHANGED=1
+fi
+if [[ -f /etc/powerdns/pdns.d/bind.conf ]]; then rm -f /etc/powerdns/pdns.d/bind.conf; PDNS_CHANGED=1; fi
 # pdns.conf includes pdns.d (replication to a secondary nameserver): set aside any other file there.
 for f in /etc/powerdns/pdns.d/*.conf; do
-  [[ -e $f && $(basename "$f") != hostpanel-* ]] && mv "$f" "$f.disabled-by-hostpanel"
+  if [[ -e $f && $(basename "$f") != hostpanel-* ]]; then mv "$f" "$f.disabled-by-hostpanel"; PDNS_CHANGED=1; fi
 done
 mkdir -p /var/lib/powerdns
 if [[ ! -s /var/lib/powerdns/pdns.sqlite3 ]]; then
@@ -487,15 +550,16 @@ if [[ ! -s /var/lib/powerdns/pdns.sqlite3 ]]; then
 fi
 chown -R pdns:pdns /var/lib/powerdns
 TPL=([PDNS_KEY]="$PDNS_KEY" [NS1]="$NS1" [PDNS_LISTEN]="$PDNS_LISTEN")
-render "$T/pdns.conf" /etc/powerdns/pdns.conf
-chown root:pdns /etc/powerdns/pdns.conf; chmod 0640 /etc/powerdns/pdns.conf
+render "$T/pdns.conf" /etc/powerdns/pdns.conf 0640 && PDNS_CHANGED=1
+chown root:pdns /etc/powerdns/pdns.conf
 q systemctl enable pdns
-q systemctl restart pdns || die "PowerDNS no arrancó. ¿Está ocupado el puerto 53? (ss -lunp | grep :53)"
+restart_if "$PDNS_CHANGED" pdns || die "PowerDNS no arrancó. ¿Está ocupado el puerto 53? (ss -lunp | grep :53)"
 ok "PowerDNS escuchando en el puerto 53"
 
 # =====================================================================================
 step "Caddy con WAF (Coraza + OWASP CRS) y rate limit"
 id caddy >/dev/null 2>&1 || q useradd --system --home-dir /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+CADDY_CHANGED=0
 if [[ $UPDATE == 1 ]] || ! has_module http.handlers.waf || ! has_module http.handlers.rate_limit; then
   CADDY_URL="https://caddyserver.com/api/download?os=linux&arch=${ARCH}&p=github.com%2Fcorazawaf%2Fcoraza-caddy%2Fv2&p=github.com%2Fmholt%2Fcaddy-ratelimit"
   rm -f /tmp/caddy.new
@@ -505,15 +569,15 @@ if [[ $UPDATE == 1 ]] || ! has_module http.handlers.waf || ! has_module http.han
   done
   [[ -s /tmp/caddy.new ]] || die "No se pudo descargar Caddy con los módulos WAF."
   install -m 0755 /tmp/caddy.new /usr/local/bin/caddy; rm -f /tmp/caddy.new
+  CADDY_CHANGED=1
 fi
 has_module http.handlers.waf || die "El binario de Caddy no incluye el módulo WAF"
 mkdir -p /etc/caddy "$LOG_DIR"
-cp "$T/caddy-bootstrap.json" /etc/caddy/bootstrap.json
+put_file /etc/caddy/bootstrap.json <"$T/caddy-bootstrap.json" && CADDY_CHANGED=1
 chown caddy:caddy "$LOG_DIR"; chmod 0750 "$LOG_DIR"
-cp "$T/systemd/caddy.service" /etc/systemd/system/caddy.service
-q systemctl daemon-reload
+put_file /etc/systemd/system/caddy.service <"$T/systemd/caddy.service" && { CADDY_CHANGED=1; q systemctl daemon-reload; }
 q systemctl enable caddy
-q systemctl restart caddy
+restart_if "$CADDY_CHANGED" caddy
 ok "Caddy $(/usr/local/bin/caddy version | awk '{print $1}') con módulos waf y rate_limit"
 
 # =====================================================================================
@@ -521,6 +585,7 @@ if [[ -n $MAIL_HOSTNAME ]]; then
   step "Servidor de correo (Stalwart)"
   id stalwart >/dev/null 2>&1 || q useradd --system --user-group --home-dir /opt/stalwart --shell /usr/sbin/nologin stalwart
   mkdir -p /opt/stalwart/{bin,etc/certs,data,logs}
+  MAIL_CHANGED=0
   STALWART_INSTALLED=$(/opt/stalwart/bin/stalwart --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
   if [[ -n $STALWART_INSTALLED && $STALWART_INSTALLED != 0.16.* ]]; then
     warn "Stalwart $STALWART_INSTALLED no es compatible con el panel: se instala ${STALWART_VERSION#v}"
@@ -537,19 +602,19 @@ if [[ -n $MAIL_HOSTNAME ]]; then
     tar -xzf /tmp/stalwart.tgz -C /opt/stalwart/bin; rm -f /tmp/stalwart.tgz
     if [[ -f /opt/stalwart/bin/stalwart-mail && ! -f /opt/stalwart/bin/stalwart ]]; then mv /opt/stalwart/bin/stalwart-mail /opt/stalwart/bin/stalwart; fi
     chmod 0755 /opt/stalwart/bin/stalwart
+    MAIL_CHANGED=1
   fi
   if [[ ! -s /opt/stalwart/etc/certs/mail.crt ]]; then
     q openssl req -x509 -newkey rsa:2048 -nodes -days 90 -subj "/CN=$MAIL_HOSTNAME" \
       -keyout /opt/stalwart/etc/certs/mail.key -out /opt/stalwart/etc/certs/mail.crt
   fi
   TPL=([MAIL_HOSTNAME]="$MAIL_HOSTNAME" [STALWART_PASSWORD]="$STALWART_PASSWORD" [ANY]="$ANY")
-  render "$T/stalwart.toml" /opt/stalwart/etc/config.toml
+  render "$T/stalwart.toml" /opt/stalwart/etc/config.toml 0600 && MAIL_CHANGED=1
   chown -R stalwart:stalwart /opt/stalwart
-  chmod 0600 /opt/stalwart/etc/config.toml /opt/stalwart/etc/certs/mail.key
-  cp "$T/systemd/stalwart.service" /etc/systemd/system/stalwart.service
-  q systemctl daemon-reload
+  chmod 0600 /opt/stalwart/etc/certs/mail.key
+  put_file /etc/systemd/system/stalwart.service <"$T/systemd/stalwart.service" && { MAIL_CHANGED=1; q systemctl daemon-reload; }
   q systemctl enable stalwart
-  q systemctl restart stalwart
+  restart_if "$MAIL_CHANGED" stalwart
   for _ in $(seq 1 30); do curl -sS -o /dev/null http://127.0.0.1:8080/ 2>/dev/null && break; sleep 1; done
   if curl -sS -o /dev/null http://127.0.0.1:8080/ 2>/dev/null; then ok "Stalwart en marcha"; else warn "Stalwart no responde aún: journalctl -u stalwart"; fi
 
@@ -568,7 +633,7 @@ if [[ -n $MAIL_HOSTNAME ]]; then
   if [[ -f /var/www/roundcube/index.php ]]; then
     mkdir -p /var/lib/roundcube/temp /var/lib/roundcube/logs
     TPL=([ROUNDCUBE_KEY]="$ROUNDCUBE_KEY")
-    render "$T/roundcube.config.inc.php" /var/www/roundcube/config/config.inc.php
+    render "$T/roundcube.config.inc.php" /var/www/roundcube/config/config.inc.php || true
     rm -rf /var/www/roundcube/installer
     chown -R root:hp-roundcube /var/www/roundcube; chmod -R g+rX,o-rwx /var/www/roundcube
     setfacl -R -m u:caddy:rX /var/www/roundcube
@@ -578,8 +643,9 @@ if [[ -n $MAIL_HOSTNAME ]]; then
     else
       q runuser -u hp-roundcube -- php /var/www/roundcube/bin/updatedb.sh --package=roundcube --dir=/var/www/roundcube/SQL || true
     fi
-    cp "$T/roundcube-pool.conf" "/etc/php/$PHP_VERSION/fpm/pool.d/hp-roundcube.conf"
-    q systemctl reload "php${PHP_VERSION}-fpm"
+    if put_file "/etc/php/$PHP_VERSION/fpm/pool.d/hp-roundcube.conf" <"$T/roundcube-pool.conf"; then
+      q systemctl reload "php${PHP_VERSION}-fpm"
+    fi
     ok "Webmail preparado en https://$MAIL_HOSTNAME"
   fi
 else
@@ -593,8 +659,8 @@ chmod 0700 "$ETC_DIR" "$DATA_DIR"; chmod 0755 /srv/hostpanel "$SITES_DIR"; chmod
 # Each Worker has its own 0750 folder; the parent only allows traversal.
 chmod 0711 "$WORKERS_DIR"
 setfacl -m u:caddy:x "$STORAGE_DIR"
-cat >"$ENV_FILE" <<EOF
-# HostPanel — generado por el instalador el $(date -u +%FT%TZ). Contiene secretos: no lo compartas.
+put_file "$ENV_FILE" 0600 <<EOF || true
+# HostPanel — generado por el instalador. Contiene secretos: no lo compartas.
 HP_BASE_DOMAIN=$DOMAIN
 HP_PANEL_DOMAIN=$PANEL_DOMAIN
 HP_PANEL_PORT=2087
@@ -620,16 +686,22 @@ HP_APP_DIR=$APP_DIR
 EOF
 chmod 0600 "$ENV_FILE"
 
-info "Instalando dependencias y compilando la interfaz (1-3 min)…"
-(cd "$APP_DIR/panel/api" && q npm ci --omit=dev --no-audit --no-fund)
-# Lockfiles created on another OS can miss platform binaries: fall back to a fresh install.
-(cd "$APP_DIR/panel/web" && { q npm ci --no-audit --no-fund || { rm -rf node_modules && q npm install --no-audit --no-fund; }; } && q npm run build && rm -rf node_modules)
-ok "Panel compilado"
+# Dependencies and interface are rebuilt only when the code changed since the last build.
+BUILD_ID=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || echo local-$(date +%s))
+if [[ -f $APP_DIR/.hp-build && $(<"$APP_DIR/.hp-build") == "$BUILD_ID" && -d $APP_DIR/panel/api/node_modules && -f $APP_DIR/panel/web/dist/index.html ]]; then
+  ok "Panel ya compilado para esta versión"
+else
+  info "Instalando dependencias y compilando la interfaz (1-3 min)…"
+  (cd "$APP_DIR/panel/api" && q npm ci --omit=dev --no-audit --no-fund)
+  # Lockfiles created on another OS can miss platform binaries: fall back to a fresh install.
+  (cd "$APP_DIR/panel/web" && { q npm ci --no-audit --no-fund || { rm -rf node_modules && q npm install --no-audit --no-fund; }; } && q npm run build && rm -rf node_modules)
+  printf '%s\n' "$BUILD_ID" >"$APP_DIR/.hp-build"
+  ok "Panel compilado"
+fi
 
 install -m 0755 "$APP_DIR/scripts/hostpanel" /usr/local/bin/hostpanel
 chmod 0755 "$APP_DIR/scripts/hp-update"
-cp "$T/systemd/hostpanel.service" /etc/systemd/system/hostpanel.service
-q systemctl daemon-reload
+put_file /etc/systemd/system/hostpanel.service <"$T/systemd/hostpanel.service" && q systemctl daemon-reload
 q systemctl enable hostpanel
 
 NODE_RUN=(node --disable-warning=ExperimentalWarning src/cli.ts)

@@ -123,6 +123,7 @@ export async function setMainDomain(domain: string, email: string | undefined, u
   // Transient unit: the installer restarts the panel, so it must not run inside it.
   await exec('systemd-run', [
     `--unit=hostpanel-identity-${id}`,
+    '--setenv=HOME=/root',
     '--collect',
     '--quiet',
     '--property=Type=oneshot',

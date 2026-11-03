@@ -186,6 +186,7 @@ export async function runUpdate(component: ComponentId, user: string): Promise<n
   // Transient unit: survives the panel restarting itself during the update.
   await exec('systemd-run', [
     `--unit=hostpanel-update-${id}`,
+    '--setenv=HOME=/root',
     '--collect',
     '--quiet',
     '--property=Type=oneshot',

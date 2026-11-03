@@ -45,6 +45,8 @@ finish() {
 trap finish EXIT
 
 [[ $EUID -eq 0 ]] || { echo "Necesita root"; exit 1; }
+# Transient systemd units have no HOME; git and npm need one.
+export HOME=${HOME:-/root}
 # shellcheck disable=SC1090
 [[ -f $ENV_FILE ]] && { set -a; . "$ENV_FILE"; set +a; }
 
@@ -65,24 +67,20 @@ github_latest() {
 
 update_panel() {
   say "HostPanel"
-  if [[ ! -d $APP_DIR/.git ]]; then echo "La instalación no viene de git: se omite."; return 0; fi
   local before after
-  before=$(git -C "$APP_DIR" rev-parse --short HEAD)
+  before=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo local)
+  if [[ ! -d $APP_DIR/.git ]]; then
+    # Installed from a copy without git: make the folder a checkout so it can be updated.
+    git -C "$APP_DIR" init -q
+    git -C "$APP_DIR" remote add origin "${HP_REPO:-https://github.com/sergineko/Host-Panel.git}" 2>/dev/null || true
+  fi
   git -C "$APP_DIR" fetch --depth 1 origin "${HP_BRANCH:-main}"
   git -C "$APP_DIR" reset --hard FETCH_HEAD
   after=$(git -C "$APP_DIR" rev-parse --short HEAD)
   echo "Versión: $before → $after"
-  (cd "$APP_DIR/panel/api" && npm ci --omit=dev --no-audit --no-fund)
-  (cd "$APP_DIR/panel/web" && { npm ci --no-audit --no-fund || { rm -rf node_modules && npm install --no-audit --no-fund; }; } && npm run build && rm -rf node_modules)
-  install -m 0755 "$APP_DIR/scripts/hostpanel" /usr/local/bin/hostpanel
-  cp "$APP_DIR/templates/systemd/hostpanel.service" /etc/systemd/system/hostpanel.service
-  # Caddy unit: admin API on a private unix socket (takes effect on the next Caddy restart).
-  cp "$APP_DIR/templates/systemd/caddy.service" /etc/systemd/system/caddy.service
-  cp "$APP_DIR/templates/caddy-bootstrap.json" /etc/caddy/bootstrap.json
-  systemctl daemon-reload
-  systemctl restart hostpanel
-  for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3000/api/health && break; sleep 1; done
-  curl -fsS -o /dev/null http://127.0.0.1:3000/api/health && echo "Panel en marcha"
+  # The installer applies everything the new version needs (configuration, services, panel
+  # build) and only restarts what changed. Same path as re-running it by hand.
+  HP_REEXEC=1 HP_KEEP_CODE=1 bash "$APP_DIR/install.sh" --yes
 }
 
 update_caddy() {
