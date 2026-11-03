@@ -235,6 +235,44 @@ La clave se lee de tu carpeta de usuario. Si la guardas en otro sitio, indica la
   Envíasela al cliente; la pegará en **«Ya tengo licencia»** al instalar.
 - Para cambiar de plan o renovar, genera una licencia nueva y el cliente la instala encima de la anterior.
 
+#### Paso a paso en Windows
+
+No hace falta instalar el panel ni sus dependencias: basta Node.js y la carpeta `tools/license` del repositorio.
+
+1. **Instala Node.js** (versión LTS, 22 o posterior) desde [nodejs.org](https://nodejs.org), o en PowerShell:
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+   Cierra y vuelve a abrir PowerShell, y comprueba que responde con `node -v`.
+2. **Descarga el código**: con [Git para Windows](https://git-scm.com/download/win)
+   (`git clone https://github.com/sergineko/Host-Panel.git`) o desde GitHub con **Code → Download ZIP** y descomprímelo.
+3. **Abre PowerShell en esa carpeta**:
+   ```powershell
+   cd C:\ruta\Host-Panel
+   ```
+4. **Solo la primera vez en ese PC, la clave privada**:
+   - Si ya tienes una (de otro ordenador), copia su carpeta `.hostpanel-license` a `C:\Users\<usuario>\`. **No crees otra**:
+     con una clave nueva, las licencias que ya vendiste dejan de valer.
+   - Si es la primera vez que vendes licencias: `node tools/license/keygen.mjs` (y pon la clave pública en el panel, ver
+     arriba).
+5. **Genera la licencia y cópiala al portapapeles**:
+   ```powershell
+   node tools/license/issue.mjs personal cliente@empresa.com 2027-12-31 | Set-Clipboard
+   ```
+   En pantalla verás el identificador (`Licencia HP-…`); la licencia queda en el portapapeles, lista para pegarla en el
+   correo al cliente. Cambia `personal` por `profesional`, `empresa` o `reseller` según el plan. Para guardarla en un
+   archivo:
+   ```powershell
+   node tools/license/issue.mjs personal cliente@empresa.com 2027-12-31 | Set-Content -Encoding ascii licencia-cliente.txt
+   ```
+6. **Haz copia de seguridad de la clave** (por ejemplo en un USB cifrado o tu gestor de contraseñas):
+   ```powershell
+   Copy-Item "$HOME\.hostpanel-license" "E:\copia-hostpanel-license" -Recurse
+   ```
+
+Si aparece `node no se reconoce`, vuelve a abrir PowerShell tras instalar Node.js. Si aparece `No se encuentra la clave
+privada`, la carpeta `.hostpanel-license` no está en `C:\Users\<usuario>\` (o indica su ruta en `HP_LICENSE_KEY`).
+
 **Enlace para contratar**: si tienes tienda o página de precios, pon su dirección en `LICENSE_STORE_URL`
 (`panel/api/src/services/license.ts`). Cada plan mostrará un botón **Contratar** que abre `<dirección>?plan=<código>`.
 Mientras esté vacía, los planes indican que se contraten con el proveedor.
